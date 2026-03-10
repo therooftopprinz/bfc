@@ -2,27 +2,23 @@
 #define __BFC_TIMER_HPP__
 
 #include <map>
-#include <unordered_map>
+#include <list>
 #include <chrono>
 #include <mutex>
-#include <condition_variable>
-#include <iostream>
 
 #include <bfc/function.hpp>
 
 namespace bfc
 {
 
-template <typename cb_t = std::function<void()>>
+template <typename cb_t = light_function<void()>>
 class timer
 {
 public:
     using timer_id_t = std::pair<int64_t, uint64_t>;
 
     timer_id_t wait_ms(int64_t for_ms, cb_t cb,
-        int64_t now_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::high_resolution_clock::now().time_since_epoch()).count();)
+        int64_t now_ms = current_time_ms())
     {
         std::unique_lock lg(m_cb_map_mtx);
         auto next_ms = now_ms + for_ms;
@@ -32,16 +28,27 @@ public:
         return rv;
     }
 
+    bool get_next_deadline_ms(int64_t& deadline_ms) const
+    {
+        std::unique_lock lg(m_cb_map_mtx);
+        if (m_cb_map.empty())
+        {
+            return false;
+        }
+        deadline_ms = m_cb_map.begin()->first.first;
+        return true;
+    }
+
     bool cancel(timer_id_t id)
     {
         std::unique_lock lg(m_cb_map_mtx);
-        return m_cb_map.erase(id);
+        return m_cb_map.erase(id) != 0;
     }
 
-    void schedule(int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::high_resolution_clock::now().time_since_epoch()).count())
+    void schedule(int64_t now_ms = current_time_ms())
     {
-        std::list<decltype(m_cb_map)::node_type> extracted;
+        using node_type = typename std::map<timer_id_t, cb_t>::node_type;
+        std::list<node_type> extracted;
         {
             std::unique_lock lg(m_cb_map_mtx);
             auto it = m_cb_map.begin();
@@ -66,12 +73,18 @@ public:
         }
     }
 
+    static int64_t current_time_ms()
+    {
+        using namespace std::chrono;
+        return duration_cast<milliseconds>(
+            steady_clock::now().time_since_epoch()).count();
+    }
+
 private:
     uint64_t m_timer_ctr = 0;
     std::map<timer_id_t, cb_t> m_cb_map;
-    std::mutex m_cb_map_mtx;
+    mutable std::mutex m_cb_map_mtx;
 };
-
 
 } // namespace bfc
 

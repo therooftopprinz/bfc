@@ -1,7 +1,9 @@
 #ifndef __BFC_BUFFER_HPP__
 #define __BFC_BUFFER_HPP__
 
-#include <type_traits>
+#include <cstddef>     // std::byte, size_t
+#include <type_traits> // std::is_nothrow_invocable_v
+#include <utility>     // std::move
 
 #include <bfc/function.hpp>
 
@@ -31,21 +33,31 @@ public:
     void operator=(const simple_buffer&) = delete;
 
     simple_buffer(simple_buffer&& p_other) noexcept
+        : m_size(p_other.m_size)
+        , m_data(p_other.m_data)
+        , m_deleter(std::move(p_other.m_deleter))
     {
-        reset();
-        transfer(std::move(p_other));
+        clear(p_other);
     }
 
     simple_buffer& operator=(simple_buffer&& p_other) noexcept
     {
-        reset();
-        transfer(std::move(p_other));
+        if (this != &p_other)
+        {
+            reset();
+            transfer(p_other);
+        }
         return *this;
     }
 
     T* data() const
     {
         return m_data;
+    }
+
+    bool empty() const noexcept
+    {
+        return m_size == 0;
     }
 
     size_t size() const
@@ -57,32 +69,33 @@ public:
     {
         if (m_data)
         {
-            m_deleter((const T*)m_data);
+            m_deleter(static_cast<const void*>(m_data));
         }
-        clear(std::move(*this));
+        clear(*this);
     }
 
 private:
-    static void clear(simple_buffer&& p_other) noexcept
+    static void clear(simple_buffer& p_other) noexcept
     {
         p_other.m_data = nullptr;
         p_other.m_size = 0;
-        p_other.m_deleter = nullptr;
+        p_other.m_deleter = D{};
     }
 
-    void transfer(simple_buffer&& p_other) noexcept
+    void transfer(simple_buffer& p_other) noexcept
     {
         m_data = p_other.m_data;
         m_size = p_other.m_size;
         m_deleter = std::move(p_other.m_deleter);
-        clear(std::move(p_other));
-    };
+        clear(p_other);
+    }
 
     size_t m_size = 0;
     T* m_data = nullptr;
     D  m_deleter;
 
     static_assert(sizeof(T)==1);
+    static_assert(std::is_invocable_v<D, const void*>);
 };
 
 template<typename T>
@@ -116,6 +129,11 @@ public:
     T* data() const
     {
         return m_data;
+    }
+
+    bool empty() const noexcept
+    {
+        return m_size == 0;
     }
 
     size_t size() const

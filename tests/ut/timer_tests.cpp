@@ -1,116 +1,69 @@
-// #include <thread>
+#include <gtest/gtest.h>
+#include <gmock/gmock.h>
 
-// #include <gtest/gtest.h>
-// #include <gmock/gmock.h>
+#include <bfc/timer.hpp>
 
-// #include <bfc/timer.hpp>
+using namespace bfc;
+using namespace testing;
 
-// using namespace bfc;
-// using namespace testing;
+using TestTimer = timer<light_function<void()>>;
 
-// struct SequenceChecker
-// {
-//     MOCK_METHOD1(check, void(int));
-// };
+TEST(TimerTest, shouldExecuteSingleTimerAtOrAfterDeadline)
+{
+    TestTimer t;
+    bool called = false;
 
-// struct TimerTest : Test
-// {
-//     void SetUp()
-//     {
-//         runner = std::thread([this](){sut.run();});
-//     }
+    auto now = 1000;
+    t.wait_ms(100, [&] { called = true; }, now);
 
-//     void TearDown()
-//     {
-//         sut.stop();
-//         runner.join();
-//     }
+    // Before deadline: nothing
+    t.schedule(now + 50);
+    EXPECT_FALSE(called);
 
-//     void stopTest()
-//     {
-//         std::unique_lock<std::mutex> lg(endOfTestMutex);
-//         endOfTest = true;
-//         endOfTesCv.notify_one();
-//     }
+    // At / after deadline: should fire
+    t.schedule(now + 100);
+    EXPECT_TRUE(called);
+}
 
-//     void waitTest()
-//     {
-//         std::unique_lock<std::mutex> lg(endOfTestMutex);
-//         endOfTesCv.wait(lg, [this](){return endOfTest;});
-//     }
+TEST(TimerTest, shouldExecuteInOrderOfDeadline)
+{
+    TestTimer t;
+    std::vector<int> sequence;
 
-//     timer<> sut;
-//     std::thread runner;
-//     SequenceChecker checker;
+    auto base = 10;
 
-//     std::vector<int> checker2;
-//     std::mutex checker2mutex;
+    // Later timer
+    t.wait_ms(200, [&] { sequence.push_back(2); }, base);
+    // Earlier timer
+    t.wait_ms(50, [&] { sequence.push_back(1); }, base);
 
-//     bool endOfTest = false;
-//     std::mutex endOfTestMutex;
-//     std::condition_variable endOfTesCv;
+    t.schedule(base + 300);
 
-//     static constexpr uint64_t FACTOR = 1000;
-    
-// };
+    ASSERT_THAT(sequence, ElementsAre(1, 2));
+}
 
-// TEST_F(TimerTest, shouldSchedule)
-// {
-//     sut.wait_ms(std::chrono::nanoseconds(1000*1000*1), [this](){sut.stop();});
-// }
+TEST(TimerTest, shouldNotRunCanceledTimer)
+{
+    TestTimer t;
+    std::vector<int> sequence;
+    auto base = 10;
 
-// TEST_F(TimerTest, shouldScheduleEarlier)
-// {
-//     InSequence seq;
-//     EXPECT_CALL(checker, check(1));
-//     EXPECT_CALL(checker, check(200));
+    auto id1 = t.wait_ms(50, [&] { sequence.push_back(1); }, base);
+    auto id2 = t.wait_ms(60, [&] { sequence.push_back(2); }, base);
 
-//     sut.wait_ms(std::chrono::nanoseconds(FACTOR*200), [this]()
-//         {
-//             checker.check(200);
-//             stopTest();
-//         });
-//     sut.wait_ms(std::chrono::nanoseconds(FACTOR*1), [this]()
-//         {
-//             checker.check(1);
-//         });
-//     waitTest();
-// }
+    // Cancel second timer
+    EXPECT_TRUE(t.cancel(id2));
 
-// TEST_F(TimerTest, shouldCancel)
-// {
-//     constexpr uint64_t BASE = FACTOR*1;
-//     std::vector<int> expectedSequence;
+    t.schedule(base + 100);
 
-//     for (int i = 0; i<50; i++)
-//     {
-//         if (0 != i%5 || 0 == i%10 || i == 0)
-//         {
-//             expectedSequence.emplace_back(i);
-//         }
+    ASSERT_THAT(sequence, ElementsAre(1));
+}
 
-//         // std::cout << "SCHEDULE " << i << "\n";
-//         sut.wait_ms(std::chrono::nanoseconds(BASE + FACTOR*i*1000), [this, i]()
-//             {
-//                 // std::cout << "RUN " << i << "\n";
-//                 {
-//                     std::unique_lock<std::mutex> lg(checker2mutex);
-//                     checker2.emplace_back(i);
-//                 }
-//                 if (0 == i%10)
-//                 {
-//                     auto id = i + 5;
-//                     sut.cancel(id);
-//                     // std::cout << "TRY CANCEL " << id << "\n";
-//                 }
-//                 if (i==49)
-//                 {
-//                     stopTest();
-//                 }
-//             });
-//     }
+TEST(TimerTest, cancelReturnsFalseForUnknownId)
+{
+    TestTimer t;
+    // Arbitrary id that was never scheduled
+    TestTimer::timer_id_t fake{1234, 5678};
+    EXPECT_FALSE(t.cancel(fake));
+}
 
-//     waitTest();
-
-//     EXPECT_THAT(checker2, ElementsAreArray(expectedSequence));
-// }

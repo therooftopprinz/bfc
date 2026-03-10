@@ -15,7 +15,7 @@
 namespace bfc
 {
 
-template <typename T, typename reactor_t, typename cb_t = light_function<void()>>
+template <typename T, typename reactor_t>
 class reactive_event_queue
 {
 public:
@@ -38,13 +38,7 @@ public:
 
         if (m_reactor)
         {
-            m_reactor->wake_up([this](){
-                    std::unique_lock<std::mutex> lg(cb_mtx);
-                    if (cb)
-                    {
-                        cb();
-                    }
-                });
+            m_reactor->wake_up();
         }
 
         return rv;
@@ -67,10 +61,9 @@ private:
 
     std::mutex m_queue_mtx;
     std::vector<T> m_queue;
-    reactor_t* m_reactor = nullptr;
-
     std::mutex cb_mtx;
-    cb_t cb;
+    light_function<void()> cb = nullptr;
+    reactor_t* m_reactor = nullptr;
 };
 
 template <typename T>

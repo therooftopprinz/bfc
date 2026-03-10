@@ -10,10 +10,10 @@ using r_cb_t = std::function<void()>;
 
 struct fake_reactor
 {
-    void wake_up(r_cb_t){};
+    void wake_up(r_cb_t = nullptr){};
 };
 
-using queue_t = reactive_event_queue<uint64_t, fake_reactor, r_cb_t>;
+using queue_t = reactive_event_queue<uint64_t, fake_reactor>;
 
 struct counters_t
 {

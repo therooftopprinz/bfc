@@ -167,14 +167,13 @@ TEST(epoll_reactor, reactive_read)
         }
     });
 
-    auto server_ctx = reactor.make_context(server.fd());
 
     uint64_t total_latency = 0;
     uint64_t lo_latency = std::numeric_limits<uint64_t>::max();
     uint64_t hi_latency = std::numeric_limits<uint64_t>::min();
 
     uint64_t rcx = 0;
-    ASSERT_NE(-1, reactor.add_read_rdy(server_ctx, [&](){
+    ASSERT_NE(-1, reactor.add_read_rdy(server.fd(), [&](){
             uint64_t b;
             buffer_view rb((std::byte*) &b, sizeof(b));
             ASSERT_NE(-1, server.recv(rb, 0));
@@ -235,10 +234,8 @@ TEST(epoll_reactor, reactive_write)
         reactor.stop();
     });
 
-    auto client_context = reactor.make_context(client.fd());
-
     uint64_t i=0;
-    r_cb_t on_client_write_rdy = [&reactor, &client_context, &client, &i](){
+    r_cb_t on_client_write_rdy = [&reactor, &client, &i](){
             uint64_t b = i;
             buffer_view wb((std::byte*) &b, sizeof(b));
             ASSERT_NE(-1, client.send(wb, 0));
@@ -248,11 +245,11 @@ TEST(epoll_reactor, reactive_write)
                 // printf("client: stop!\n");
                 return;
             }
-            ASSERT_NE(false, reactor.req_write(client_context));
+            ASSERT_NE(false, reactor.req_write(client.fd()));
         };
 
-    reactor.add_write_rdy(client_context, on_client_write_rdy);
-    reactor.req_write(client_context);
+    reactor.add_write_rdy(client.fd(), on_client_write_rdy);
+    reactor.req_write(client.fd());
 
     auto t_start = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
     reactor.run();
@@ -292,9 +289,7 @@ TEST(epoll_reactor, reactive)
             }
         };
 
-    auto client_context = reactor.make_context(client.fd());
-
-    r_cb_t on_client_write_rdy = [&reactor, &client, &client_context, &ctrs](){
+    r_cb_t on_client_write_rdy = [&reactor, &client, &ctrs](){
             uint64_t b = ctrs.client_write;
             buffer_view wb((std::byte*) &b, sizeof(b));
             ASSERT_NE(-1, client.send(wb, 0));
@@ -307,7 +302,7 @@ TEST(epoll_reactor, reactive)
             }
 
             // printf("client: wreq!\n");
-            ASSERT_NE(-1, reactor.req_write(client_context));
+            ASSERT_NE(-1, reactor.req_write(client.fd()));
         };
 
     ASSERT_NE(-1, client.connect(ip4_port_to_sockaddr(localhost4, 12345)));
@@ -319,11 +314,10 @@ TEST(epoll_reactor, reactive)
     // server.set_sock_opt(IPPROTO_TCP, TCP_NODELAY, int(1));
     // client.set_sock_opt(IPPROTO_TCP, TCP_NODELAY, int(1));
 
-    auto server_context = reactor.make_context(server.fd());
-    ASSERT_NE(false, reactor.add_read_rdy(server_context, on_server_read_rdy));
+    ASSERT_NE(false, reactor.add_read_rdy(server.fd(), on_server_read_rdy));
 
-    reactor.add_write_rdy(client_context, on_client_write_rdy);
-    reactor.req_write(client_context);
+    reactor.add_write_rdy(client.fd(), on_client_write_rdy);
+    reactor.req_write(client.fd());
 
     auto t_start = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
     reactor.run();
