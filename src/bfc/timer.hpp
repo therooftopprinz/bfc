@@ -17,26 +17,40 @@ class timer
 public:
     using timer_id_t = std::pair<int64_t, uint64_t>;
 
-    timer_id_t wait_ms(int64_t for_ms, cb_t cb,
-        int64_t now_ms = current_time_ms())
+    // Wait for a number of microseconds before firing the callback.
+    timer_id_t wait_us(int64_t for_us, cb_t cb,
+        int64_t now_us = current_time_us())
     {
         std::unique_lock lg(m_cb_map_mtx);
-        auto next_ms = now_ms + for_ms;
+        auto next_us = now_us + for_us;
         auto timer_id = m_timer_ctr++;
-        timer_id_t rv{next_ms, timer_id};
+        timer_id_t rv{next_us, timer_id};
         m_cb_map.emplace(rv, cb);
         return rv;
     }
 
-    bool get_next_deadline_ms(int64_t& deadline_ms) const
+    // Convenience wrapper for millisecond waits built on top of microseconds.
+    timer_id_t wait_ms(int64_t for_ms, cb_t cb,
+        int64_t now_us = current_time_us())
+    {
+        return wait_us(for_ms * 1000, std::move(cb), now_us);
+    }
+
+    bool get_next_deadline_us(int64_t& deadline_us) const
     {
         std::unique_lock lg(m_cb_map_mtx);
         if (m_cb_map.empty())
         {
             return false;
         }
-        deadline_ms = m_cb_map.begin()->first.first;
+        deadline_us = m_cb_map.begin()->first.first;
         return true;
+    }
+
+    // Backwards-compatible alias (now returns microsecond deadline)
+    bool get_next_deadline_ms(int64_t& deadline_ms) const
+    {
+        return get_next_deadline_us(deadline_ms);
     }
 
     bool cancel(timer_id_t id)
@@ -45,7 +59,7 @@ public:
         return m_cb_map.erase(id) != 0;
     }
 
-    void schedule(int64_t now_ms = current_time_ms())
+    void schedule(int64_t now_us = current_time_us())
     {
         using node_type = typename std::map<timer_id_t, cb_t>::node_type;
         std::list<node_type> extracted;
@@ -57,7 +71,7 @@ public:
                 auto next = it;
                 next++;
                 auto& timer = *it;
-                if (now_ms >= timer.first.first)
+                if (now_us >= timer.first.first)
                 {
                     extracted.emplace_back(m_cb_map.extract(it));
                     it = next;
@@ -73,11 +87,17 @@ public:
         }
     }
 
-    static int64_t current_time_ms()
+    static int64_t current_time_us()
     {
         using namespace std::chrono;
-        return duration_cast<milliseconds>(
+        return duration_cast<microseconds>(
             steady_clock::now().time_since_epoch()).count();
+    }
+
+    // Backwards-compatible alias
+    static int64_t current_time_ms()
+    {
+        return current_time_us();
     }
 
 private:

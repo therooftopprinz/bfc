@@ -216,23 +216,28 @@ struct epoll_reactor
         while (m_running)
         {
             int timeout_ms = -1;
-            int64_t next_deadline_ms = 0;
-            bool has_deadline = m_timer.get_next_deadline_ms(next_deadline_ms);
+            int64_t next_deadline_us = 0;
+            bool has_deadline = m_timer.get_next_deadline_us(next_deadline_us);
             if (has_deadline)
             {
-                auto now_ms = timer_t::current_time_ms();
-                auto diff = next_deadline_ms - now_ms;
+                auto now_us = timer_t::current_time_us();
+                auto diff = next_deadline_us - now_us;
                 if (diff <= 0)
                 {
                     timeout_ms = 0;
                 }
-                else if (diff > static_cast<int64_t>(std::numeric_limits<int>::max()))
-                {
-                    timeout_ms = std::numeric_limits<int>::max();
-                }
                 else
                 {
-                    timeout_ms = static_cast<int>(diff);
+                    // convert microseconds to milliseconds for epoll_wait
+                    auto diff_ms = diff / 1000;
+                    if (diff_ms > static_cast<int64_t>(std::numeric_limits<int>::max()))
+                    {
+                        timeout_ms = std::numeric_limits<int>::max();
+                    }
+                    else
+                    {
+                        timeout_ms = static_cast<int>(diff_ms);
+                    }
                 }
             }
 
@@ -294,7 +299,7 @@ struct epoll_reactor
             }
             m_pending_cleanup.clear();
 
-            m_timer.schedule(timer_t::current_time_ms());
+            m_timer.schedule(timer_t::current_time_us());
         } // while (m_running)
     }
 

@@ -66,20 +66,20 @@ public:
         m_running = true;
         while (m_running)
         {
-            int64_t next_deadline_ms = 0;
-            bool has_deadline = m_timer.get_next_deadline_ms(next_deadline_ms);
-            auto now_ms = timer_t::current_time_ms();
+            int64_t next_deadline_us = 0;
+            bool has_deadline = m_timer.get_next_deadline_us(next_deadline_us);
+            auto now_us = timer_t::current_time_us();
             auto timeout_ms = m_timeout_ms;
             if (has_deadline)
             {
-                auto diff = next_deadline_ms - now_ms;
+                auto diff = next_deadline_us - now_us;
                 if (diff <= 0)
                 {
                     timeout_ms = 0;
                 }
                 else if (static_cast<size_t>(diff) < timeout_ms)
                 {
-                    timeout_ms = static_cast<size_t>(diff);
+                    timeout_ms = static_cast<size_t>(diff / 1000);
                 }
             }
 
@@ -113,7 +113,7 @@ public:
                 }
             }
 
-            m_timer.schedule(timer_t::current_time_ms());
+            m_timer.schedule(timer_t::current_time_us());
         }
     }
 

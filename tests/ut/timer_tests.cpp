@@ -13,15 +13,16 @@ TEST(TimerTest, shouldExecuteSingleTimerAtOrAfterDeadline)
     TestTimer t;
     bool called = false;
 
-    auto now = 1000;
-    t.wait_ms(100, [&] { called = true; }, now);
+    // Use microsecond timebase explicitly
+    int64_t now_us = 1'000;
+    t.wait_us(100, [&] { called = true; }, now_us);
 
     // Before deadline: nothing
-    t.schedule(now + 50);
+    t.schedule(now_us + 50);
     EXPECT_FALSE(called);
 
     // At / after deadline: should fire
-    t.schedule(now + 100);
+    t.schedule(now_us + 100);
     EXPECT_TRUE(called);
 }
 
@@ -30,14 +31,14 @@ TEST(TimerTest, shouldExecuteInOrderOfDeadline)
     TestTimer t;
     std::vector<int> sequence;
 
-    auto base = 10;
+    int64_t base_us = 10;
 
-    // Later timer
-    t.wait_ms(200, [&] { sequence.push_back(2); }, base);
-    // Earlier timer
-    t.wait_ms(50, [&] { sequence.push_back(1); }, base);
+    // Later timer (larger deadline)
+    t.wait_us(200, [&] { sequence.push_back(2); }, base_us);
+    // Earlier timer (smaller deadline)
+    t.wait_us(50, [&] { sequence.push_back(1); }, base_us);
 
-    t.schedule(base + 300);
+    t.schedule(base_us + 300);
 
     ASSERT_THAT(sequence, ElementsAre(1, 2));
 }
@@ -46,15 +47,15 @@ TEST(TimerTest, shouldNotRunCanceledTimer)
 {
     TestTimer t;
     std::vector<int> sequence;
-    auto base = 10;
+    int64_t base_us = 10;
 
-    auto id1 = t.wait_ms(50, [&] { sequence.push_back(1); }, base);
-    auto id2 = t.wait_ms(60, [&] { sequence.push_back(2); }, base);
+    auto id1 = t.wait_us(50, [&] { sequence.push_back(1); }, base_us);
+    auto id2 = t.wait_us(60, [&] { sequence.push_back(2); }, base_us);
 
     // Cancel second timer
     EXPECT_TRUE(t.cancel(id2));
 
-    t.schedule(base + 100);
+    t.schedule(base_us + 100);
 
     ASSERT_THAT(sequence, ElementsAre(1));
 }

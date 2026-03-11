@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 #include <stdexcept>
+#include <cstring>
 
 #include <bfc/buffer.hpp>
 
