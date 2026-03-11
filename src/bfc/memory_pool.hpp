@@ -7,7 +7,6 @@
 #include <vector>
 #include <cstddef>
 
-#include <bfc/function.hpp>
 #include <bfc/buffer.hpp>
 
 namespace bfc
@@ -49,19 +48,16 @@ public:
 private:
     std::byte* allocate_raw()
     {
-        std::byte* rv;
         std::unique_lock<std::mutex> lg(m_alloc_mtx);
-        if (m_allocations.size())
+        if (!m_allocations.empty())
         {
-            rv = m_allocations.back();
+            std::byte* rv = m_allocations.back();
             m_allocations.pop_back();
-            lg.unlock();
+            return rv;
         }
-        else
-        {
-            rv = (std::byte*) operator new[](m_size, std::align_val_t {ALIGNMENT});
-        }
-        return rv;
+        lg.unlock();
+        return static_cast<std::byte*>(
+            operator new[](m_size, std::align_val_t{ALIGNMENT}));
     }
 
     const size_t m_size;

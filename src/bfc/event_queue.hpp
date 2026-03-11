@@ -2,46 +2,42 @@
 #define __BFC_EVENT_QUEUE_HPP__
 
 #include <condition_variable>
-#include <atomic>
 #include <mutex>
-#include <deque>
-
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
-#include <sys/unistd.h>
+#include <vector>
 
 #include <bfc/function.hpp>
 
 namespace bfc
 {
 
-template <typename T, typename reactor_t>
-class reactive_event_queue
+// Polymorphic base for reactive queues, decoupled from T.
+template <typename cb_t = light_function<void()>>
+class reactive_event_queue_base
 {
 public:
-    reactive_event_queue(reactor_t* reactor = nullptr)
-        : m_reactor (reactor)
-    {}
+    using callback_t = cb_t;
+    virtual ~reactive_event_queue_base() = default;
+    virtual void set_callback(callback_t cb) = 0;
+    virtual bool has_data() = 0;
+    virtual void notify_callback() = 0;
+};
 
-    ~reactive_event_queue()
-    {}
+template <typename T>
+class reactive_event_queue : public reactive_event_queue_base<>
+{
+public:
+    using callback_t = typename reactive_event_queue_base<>::callback_t;
+
+    reactive_event_queue() = default;
+
+    ~reactive_event_queue() = default;
 
     template <typename U>
     size_t push(U&& u)
     {
-        size_t rv = 0;
-        {
-            std::unique_lock<std::mutex> lg(m_queue_mtx);
-            m_queue.emplace_back(std::forward<U>(u));
-            rv = m_queue.size();
-        }
-
-        if (m_reactor)
-        {
-            m_reactor->wake_up();
-        }
-
-        return rv;
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        m_queue.emplace_back(std::forward<U>(u));
+        return m_queue.size();
     }
 
     std::vector<T> pop()
@@ -56,26 +52,43 @@ public:
         return m_queue.size();
     }
 
-private:
-    template <typename, typename> friend class cv_reactor;
+    void set_callback(callback_t cb) override
+    {
+        std::unique_lock<std::mutex> lg(cb_mtx);
+        m_cb = std::move(cb);
+    }
 
+    bool has_data() override
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        return !m_queue.empty();
+    }
+
+    void notify_callback() override
+    {
+        std::unique_lock<std::mutex> lg(cb_mtx);
+        if (m_cb)
+        {
+            m_cb();
+        }
+    }
+
+private:
     std::mutex m_queue_mtx;
     std::vector<T> m_queue;
     std::mutex cb_mtx;
-    light_function<void()> cb = nullptr;
-    reactor_t* m_reactor = nullptr;
+    callback_t m_cb = nullptr;
 };
 
 template <typename T>
 class event_queue
 {
 public:
-    event_queue(bool blocking = true)
+    explicit event_queue(bool blocking = true)
         : m_blocking(blocking)
     {}
 
-    ~event_queue()
-    {}
+    ~event_queue() = default;
 
     template <typename U>
     size_t push(U&& u)
@@ -89,7 +102,10 @@ public:
     std::vector<T> pop()
     {
         std::unique_lock<std::mutex> lg(m_queue_mtx);
-        if (m_blocking && 0 == m_queue.size()) cv.wait(lg);
+        if (m_blocking && m_queue.empty())
+        {
+            cv.wait(lg);
+        }
         return std::move(m_queue);
     }
 
@@ -101,10 +117,7 @@ public:
 
     void wake_up()
     {
-        if (!m_blocking)
-        {
-            return;
-        }
+        if (!m_blocking) return;
         cv.notify_one();
     }
 

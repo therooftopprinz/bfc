@@ -14,12 +14,13 @@
 namespace bfc
 {
 
-template <typename T, typename cb_t = light_function<void()>>
+template <typename cb_t = light_function<void()>>
 class cv_reactor
 {
 public:
-    using context = reactive_event_queue<T, cv_reactor<T, cb_t>>;
+    using context = reactive_event_queue_base<cb_t>;
     using timer_t = timer<cb_t>;
+    using callback_t = cb_t;
 
     cv_reactor(const cv_reactor&) = delete;
     void operator=(const cv_reactor&) = delete;
@@ -33,12 +34,6 @@ public:
         stop();
     }
 
-    template <typename... Ts>
-    context make_context(Ts&&... ts)
-    {
-        return context(std::forward<Ts>(ts)...);
-    }
-
     timer_t& get_timer()
     {
         return m_timer;
@@ -46,12 +41,9 @@ public:
 
     bool add_read_rdy(context& ctx, cb_t cb)
     {
-        {
-            std::unique_lock lg(ctx.cb_mtx);
-            ctx.cb = std::move(cb);
-        }
+        ctx.set_callback(std::move(cb));
 
-        std::unique_lock lg(m_ctx_mtx);
+        std::unique_lock<std::mutex> lg(m_ctx_mtx);
         auto it = std::find(m_contexts.begin(), m_contexts.end(), &ctx);
         if (it == m_contexts.end())
         {
@@ -62,12 +54,9 @@ public:
 
     bool remove_read_rdy(context& ctx)
     {
-        {
-            std::unique_lock lg(ctx.cb_mtx);
-            ctx.cb = nullptr;
-        }
+        ctx.set_callback(nullptr);
 
-        std::unique_lock lg(m_ctx_mtx);
+        std::unique_lock<std::mutex> lg(m_ctx_mtx);
         m_contexts.remove(&ctx);
         return true;
     }
@@ -95,11 +84,11 @@ public:
             }
 
             {
-                std::unique_lock lg(m_wakeup_mtx);
+                std::unique_lock<std::mutex> lg(m_wakeup_mtx);
 
                 m_cv.wait_for(lg, std::chrono::milliseconds(timeout_ms), [this]()
                     {
-                        return m_wakeup_req;
+                        return m_wakeup_req || !m_running;
                     });
 
                 if (m_wakeup_req)
@@ -109,32 +98,17 @@ public:
 
                     std::list<context*> ctxs;
                     {
-                        std::unique_lock ctx_lg(m_ctx_mtx);
+                        std::unique_lock<std::mutex> ctx_lg(m_ctx_mtx);
                         ctxs = m_contexts;
                     }
 
                     for (auto* ctx : ctxs)
                     {
-                        if (!ctx)
+                        if (!ctx || !ctx->has_data())
                         {
                             continue;
                         }
-
-                        if (ctx->size() == 0)
-                        {
-                            continue;
-                        }
-
-                        cb_t cb;
-                        {
-                            std::unique_lock cb_lg(ctx->cb_mtx);
-                            cb = ctx->cb;
-                        }
-
-                        if (cb)
-                        {
-                            cb();
-                        }
+                        ctx->notify_callback();
                     }
                 }
             }
@@ -145,7 +119,7 @@ public:
 
     void wake_up(cb_t = nullptr)
     {
-        std::unique_lock lg(m_wakeup_mtx);
+        std::unique_lock<std::mutex> lg(m_wakeup_mtx);
         m_wakeup_req = true;
         m_cv.notify_one();
     }

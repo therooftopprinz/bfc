@@ -10,10 +10,11 @@ using r_cb_t = std::function<void()>;
 
 struct fake_reactor
 {
+    using callback_t = r_cb_t;
     void wake_up(r_cb_t = nullptr){};
 };
 
-using queue_t = reactive_event_queue<uint64_t, fake_reactor>;
+using queue_t = reactive_event_queue<uint64_t>;
 
 struct counters_t
 {
@@ -162,8 +163,8 @@ TEST(cv_reactor, non_reactive_mt)
 
 TEST(cv_reactor, reactive_st)
 {
-    cv_reactor<uint64_t> reactor;
-    cv_reactor<uint64_t>::context queue(&reactor);
+    cv_reactor<> reactor;
+    reactive_event_queue<uint64_t> queue;
 
     uint64_t i = 0;
     reactor.add_read_rdy(queue, [&reactor, &queue, &i](){
@@ -174,9 +175,11 @@ TEST(cv_reactor, reactive_st)
                 return;
             }
             queue.push(i++);
+            reactor.wake_up();
         });
 
     queue.push(i++);
+    reactor.wake_up();
     auto t_start = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
     reactor.run();
     auto t_end = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
@@ -190,8 +193,8 @@ TEST(cv_reactor, reactive_st)
 
 TEST(cv_reactor, reactive_mt)
 {
-    cv_reactor<uint64_t> reactor;
-    cv_reactor<uint64_t>::context queue(&reactor);
+    cv_reactor<> reactor;
+    reactive_event_queue<uint64_t> queue;
 
     reactor.add_read_rdy(queue, [&reactor, &queue](){
             auto rv = queue.pop();
@@ -205,10 +208,11 @@ TEST(cv_reactor, reactive_mt)
             }
         });
 
-    std::thread writer = std::thread([&queue](){
+    std::thread writer = std::thread([&reactor, &queue](){
             for (uint64_t i=0; i<N; i++)
             {
                 queue.push(i);
+                reactor.wake_up();
             }
         });
 

@@ -6,13 +6,26 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <regex>
 #include <map>
 
 namespace bfc
 {
 
-class args_map : public std::map<std::string, std::string>
+namespace detail
+{
+inline std::string trim(const std::string& s)
+{
+    auto start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos)
+        return "";
+    auto end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end - start + 1);
+}
+} // namespace detail
+
+class args_map : public std::map<std::string, std::string, std::less<>>
 {
 public:
     args_map() = default;
@@ -20,7 +33,7 @@ public:
     template<typename T>
     std::optional<T> as(const std::string_view& p_key) const
     {
-        auto findit = find(p_key.data());
+        auto findit = find(p_key);
         if (findit == end())
         {
             return std::nullopt;
@@ -39,7 +52,7 @@ public:
 
     std::optional<std::string> arg(const std::string_view& p_key) const
     {
-        auto findit = find(p_key.data());
+        auto findit = find(p_key);
         if (findit == end())
         {
             return std::nullopt;
@@ -53,20 +66,20 @@ class configuration_parser : public args_map
 public:
     void load_line(const std::string& line)
     {
-        static const std::regex config_fmt("^(.+?)[ ]*=[ ]{0,1}(.*?)$");
+        static const std::regex config_fmt("^(.+?)[ ]*=[ ]*(.*?)$");
         std::smatch match;
         if (std::regex_match(line, match, config_fmt))
         {
-            try_emplace(match[1].str(), match[2].str());
+            try_emplace(detail::trim(match[1].str()), detail::trim(match[2].str()));
         }
     }
 
-    void load(std::string file)
+    bool load(const std::string& file)
     {
         std::ifstream in(file);
-        if (!in.is_open()) 
+        if (!in.is_open())
         {
-            return;
+            return false;
         }
 
         std::string line;
@@ -74,6 +87,7 @@ public:
         {
             load_line(line);
         }
+        return true;
     }
 };
 

@@ -1,13 +1,14 @@
 #include <gtest/gtest.h>
 
-#include <bfc/thread_pool.hpp>
 #include <bfc/function.hpp>
+#include <bfc/thread_pool.hpp>
+#include <future>
 
 using namespace bfc;
 
-TEST(thead_pool, ShouldExecute)
+TEST(thread_pool, ShouldExecute)
 {
-    using TP = thead_pool<light_function<void()>>;
+    using TP = thread_pool<light_function<void()>>;
     TP pool;
 
     constexpr int COUNT = 50;

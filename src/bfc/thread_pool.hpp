@@ -1,14 +1,12 @@
-#ifndef __THREADPOOL_HPP__
-#define __THREADPOOL_HPP__
+#ifndef BFC_THREAD_POOL_HPP
+#define BFC_THREAD_POOL_HPP
 
-#include <mutex>
-#include <vector>
-#include <thread>
-#include <future>
-#include <mutex>
-#include <memory>
 #include <condition_variable>
 #include <cstddef>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 #include <bfc/function.hpp>
 
@@ -16,15 +14,14 @@ namespace bfc
 {
 
 template <typename function_t = light_function<void()>>
-class thead_pool
+class thread_pool
 {
 public:
     using fn_t = function_t;
-    thead_pool(size_t p_max_size = 4)
-        : m_max_size(p_max_size)
+    thread_pool(size_t p_max_size = 4)
     {
         std::unique_lock<std::mutex> lg(m_free_mtx);
-        for (auto i=0u; i<m_max_size; i++)
+        for (auto i = 0u; i < p_max_size; i++)
         {
             m_free.emplace_back(i);
             m_pool.emplace_back(std::make_unique<thread_entry>());
@@ -33,17 +30,22 @@ public:
 
             entry.thread = std::thread([this, use_index = i, &entry]()
                 {
-                    auto pred = [&]() {return entry.functor || !m_is_running;};
-                    while(true)
+                    auto pred = [&]() { return entry.functor || !m_is_running; };
+                    while (true)
                     {
                         std::unique_lock<std::mutex> lg(entry.entry_mtx);
 
                         if (entry.functor)
                         {
                             entry.functor();
-                            entry.functor = {};
-                            std::unique_lock<std::mutex> lg(m_free_mtx);
-                            m_free.emplace_back(use_index);
+                            entry.functor.reset();
+                            lg.unlock();
+                            {
+                                std::unique_lock<std::mutex> lg_free(m_free_mtx);
+                                m_free.emplace_back(use_index);
+                            }
+                            m_worker_available_cv.notify_one();
+                            continue;
                         }
 
                         if (!m_is_running)
@@ -51,15 +53,13 @@ public:
                             return;
                         }
 
-                        m_max_size_cv.notify_one();
-
                         entry.thread_cv.wait(lg, pred);
                     }
                 });
         }
     }
-    
-    ~thead_pool()
+
+    ~thread_pool()
     {
         m_is_running = false;
         for (auto& i : m_pool)
@@ -72,9 +72,9 @@ public:
     {
         std::unique_lock<std::mutex> lg(m_free_mtx);
 
-        m_max_size_cv.wait(lg, [this](){
-                return m_free.size();
-            });
+        m_worker_available_cv.wait(lg, [this]() {
+            return !m_free.empty();
+        });
 
         auto use_index = m_free.back();
         m_free.pop_back();
@@ -93,7 +93,6 @@ public:
 
     size_t size() const
     {
-        std::unique_lock<std::mutex> lg(m_free_mtx);
         return m_pool.size();
     }
 private:
@@ -107,12 +106,11 @@ private:
 
     bool m_is_running = true;
     std::vector<std::unique_ptr<thread_entry>> m_pool;
-    size_t m_max_size = 8;
-    std::condition_variable m_max_size_cv;
+    std::condition_variable m_worker_available_cv;
     std::vector<size_t> m_free;
     mutable std::mutex m_free_mtx;
 };
 
 } // namespace bfc
 
-#endif // __THREADPOOL_HPP__
+#endif // BFC_THREAD_POOL_HPP

@@ -18,8 +18,7 @@ namespace bfc
 
 inline constexpr uint32_t to_ip(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 {
-    uint32_t 
-    rv =  (uint32_t(a) << 24);
+    uint32_t rv = (uint32_t(a) << 24);
     rv |= (uint32_t(b) << 16);
     rv |= (uint32_t(c) << 8);
     rv |= (uint32_t(d) << 0);
@@ -44,7 +43,8 @@ inline sockaddr_in ip4_port_to_sockaddr(std::string ip, uint16_t port)
     memset((char *)&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);  
+    if (1 != inet_pton(AF_INET, ip.c_str(), &addr.sin_addr))
+        addr.sin_family = 0;
     return addr;
 }
 
@@ -54,7 +54,8 @@ inline sockaddr_in6 ip6_port_to_sockaddr(std::string ip, uint16_t port)
     memset((char *)&addr, 0, sizeof(addr));
     addr.sin6_family = AF_INET6;
     addr.sin6_port = htons(port);
-    inet_pton(AF_INET6, ip.c_str(), &addr.sin6_addr);  
+    if (1 != inet_pton(AF_INET6, ip.c_str(), &addr.sin6_addr))
+        addr.sin6_family = 0;
     return addr;
 }
 
@@ -127,6 +128,7 @@ public:
     socket(const socket&&) = delete;
 
     socket(socket&& p_other)
+        : m_fd(-1)
     {
         if (-1 != p_other.m_fd)
         {
@@ -135,12 +137,12 @@ public:
         }
     }
 
-    void operator=(const socket&& p_other) = delete;
-    void operator=(socket&& p_other)
+    socket& operator=(const socket&& p_other) = delete;
+    socket& operator=(socket&& p_other)
     {
         if (-1 != p_other.m_fd)
         {
-            if (-1 !=m_fd)
+            if (-1 != m_fd)
             {
                 close(m_fd);
             }
@@ -148,6 +150,7 @@ public:
             m_fd = p_other.m_fd;
             p_other.m_fd = -1;
         }
+        return *this;
     }
 
     template <typename T>
@@ -221,10 +224,10 @@ public:
     template <typename T>
     int connect(const T& addr)
     {
-        return connect((sockaddr*) &addr, sizeof(addr));
+        return connect((const sockaddr*) &addr, sizeof(addr));
     }
 
-    int fd()
+    int fd() const
     {
         return m_fd;
     }
