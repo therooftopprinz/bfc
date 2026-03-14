@@ -56,6 +56,12 @@ FILE(GLOB bfc_tests_SRC
     tests/ut/*.cpp
     tests/e2e/*.cpp
     tests/gtestmain.cpp)
+# Ensure new test files are included (GLOB may be cached)
+list(APPEND bfc_tests_SRC
+    tests/ut/simple_shared_buffer_view_tests.cpp
+    tests/ut/sized_buffer_tests.cpp
+    tests/ut/metric_tests.cpp)
+list(REMOVE_DUPLICATES bfc_tests_SRC)
 
 add_executable(bfc_tests ${bfc_tests_SRC} gtest/gmock-gtest-all.cc)
 target_include_directories(bfc_tests PUBLIC bfc gtest)
