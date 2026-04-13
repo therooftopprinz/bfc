@@ -87,7 +87,21 @@ struct poll_reactor
 
         m_wake_cb = [this]() {
             char tmp[64];
-            while (read(m_wake_pipe[0], tmp, sizeof(tmp)) > 0) {}
+            while (true)
+            {
+                auto n = read(m_wake_pipe[0], tmp, sizeof(tmp));
+                if (n > 0)
+                {
+                    continue;
+                }
+                if (n == -1 && errno == EINTR)
+                {
+                    continue;
+                }
+                break;
+            }
+            // A wake signal has been consumed (or was already pending via a full pipe).
+            m_wake_pending.store(false, std::memory_order_release);
         };
     }
 
@@ -361,8 +375,33 @@ struct poll_reactor
             m_wake_up_cb.emplace_back(std::move(cb));
         }
 
+        bool expected = false;
+        if (!m_wake_pending.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+        {
+            return;
+        }
+
         char one = 1;
-        auto res [[maybe_unused]] = write(m_wake_pipe[1], &one, sizeof(one));
+        while (true)
+        {
+            auto res = write(m_wake_pipe[1], &one, sizeof(one));
+            if (res == sizeof(one))
+            {
+                return;
+            }
+            if (res == -1 && errno == EINTR)
+            {
+                continue;
+            }
+            if (res == -1 && errno == EAGAIN)
+            {
+                // Pipe is full, which still implies a pending wake signal.
+                return;
+            }
+            // Unexpected failure: let future wake attempts try again.
+            m_wake_pending.store(false, std::memory_order_release);
+            return;
+        }
     }
 
     timer<cb_t>& get_timer()
@@ -460,6 +499,7 @@ private:
 
     int m_wake_pipe[2]{-1, -1};
     cb_t m_wake_cb = nullptr;
+    std::atomic<bool> m_wake_pending{false};
     std::atomic<bool> m_running;
 
     std::unordered_map<int, fd_entry_s> m_fd_entries;
