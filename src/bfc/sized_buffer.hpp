@@ -107,15 +107,15 @@ public:
             return std::move(m_storage);
         }
 
-        const size_t n = m_size;
-        auto* data = new std::byte[n];
+        const auto out_size = m_size;
+        auto* data = new std::byte[out_size];
         if (m_storage.data() != nullptr)
         {
-            std::memcpy(data, m_storage.data(), n);
+            std::memcpy(data, m_storage.data(), out_size);
         }
 
         clear();
-        return bfc::buffer(data, n);
+        return bfc::buffer(data, out_size);
     }
 
 private:

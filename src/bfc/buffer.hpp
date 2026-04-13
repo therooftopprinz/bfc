@@ -155,7 +155,7 @@ class simple_shared_buffer_view
     using buffer_type = simple_buffer<std::remove_cv_t<T>>;
 
 public:
-    simple_shared_buffer_view() noexcept = delete;
+    simple_shared_buffer_view() = default;
 
     // @note UB if p_buffer is nullptr
     explicit simple_shared_buffer_view(std::shared_ptr<buffer_type> p_buffer) noexcept
@@ -216,7 +216,7 @@ public:
 
     bool empty() const noexcept
     {
-        return size() == 0;
+        return m_buffer == nullptr || size() == 0;
     }
 
     std::shared_ptr<buffer_type> get_shared_buffer() const noexcept
@@ -225,7 +225,7 @@ public:
     }
 
 private:
-    std::shared_ptr<buffer_type> m_buffer;
+    std::shared_ptr<buffer_type> m_buffer = nullptr;
     size_t m_offset = 0;
     size_t m_size = 0;
     static_assert(sizeof(T)==1);

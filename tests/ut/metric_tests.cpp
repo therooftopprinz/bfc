@@ -57,49 +57,48 @@ TEST(metric, FetchSub_ToZero)
 
 TEST(monitor, GetMetric_CreatesNewMetric)
 {
-    monitor mon;
-    auto m = mon.get_metric("counter");
-    ASSERT_NE(m, nullptr);
-    EXPECT_DOUBLE_EQ(m->load(), 0.0);
+    monitor mon(100, "metrics_test_counter");
+    auto& m = mon.get_metric("counter");
+    EXPECT_DOUBLE_EQ(m.load(), 0.0);
 }
 
 TEST(monitor, GetMetric_SameName_ReturnsSameInstance)
 {
-    monitor mon;
-    auto m1 = mon.get_metric("foo");
-    auto m2 = mon.get_metric("foo");
-    EXPECT_EQ(m1, m2);
-    m1->store(99.0);
-    EXPECT_DOUBLE_EQ(m2->load(), 99.0);
+    monitor mon(100, "metrics_test_same");
+    auto& m1 = mon.get_metric("foo");
+    auto& m2 = mon.get_metric("foo");
+    m1.store(99.0);
+    EXPECT_DOUBLE_EQ(m2.load(), 99.0);
+    EXPECT_EQ(&m1, &m2);
 }
 
 TEST(monitor, GetMetric_DifferentNames_ReturnsDifferentInstances)
 {
-    monitor mon;
-    auto m1 = mon.get_metric("a");
-    auto m2 = mon.get_metric("b");
-    EXPECT_NE(m1, m2);
-    m1->store(1.0);
-    m2->store(2.0);
-    EXPECT_DOUBLE_EQ(m1->load(), 1.0);
-    EXPECT_DOUBLE_EQ(m2->load(), 2.0);
+    monitor mon(100, "metrics_test_diff");
+    auto& m1 = mon.get_metric("a");
+    auto& m2 = mon.get_metric("b");
+    m1.store(1.0);
+    m2.store(2.0);
+    EXPECT_DOUBLE_EQ(m1.load(), 1.0);
+    EXPECT_DOUBLE_EQ(m2.load(), 2.0);
+    EXPECT_NE(&m1, &m2);
 }
 
-TEST(monitor, Collect_FormatsKeyValuePerLine)
+TEST(monitor, GetMetric_PersistsMetricValue)
 {
-    monitor mon;
-    auto m1 = mon.get_metric("x");
-    auto m2 = mon.get_metric("y");
-    m1->store(1.5);
-    m2->store(2.5);
-    std::string out = mon.collect();
-    EXPECT_TRUE(out.find("x 1.5") != std::string::npos);
-    EXPECT_TRUE(out.find("y 2.5") != std::string::npos);
+    monitor mon(100, "metrics_test_persist");
+    auto& m = mon.get_metric("x");
+    m.store(1.5);
+
+    auto& same = mon.get_metric("x");
+    EXPECT_DOUBLE_EQ(same.load(), 1.5);
+    EXPECT_EQ(&m, &same);
 }
 
-TEST(monitor, Collect_EmptyWhenNoMetrics)
+TEST(monitor, ConstructibleWithPathAndInterval)
 {
-    monitor mon;
-    std::string out = mon.collect();
-    EXPECT_TRUE(out.empty());
+    monitor mon(250, "metrics_test_ctor");
+    auto& m = mon.get_metric("ctor");
+    m.store(3.0);
+    EXPECT_DOUBLE_EQ(m.load(), 3.0);
 }
