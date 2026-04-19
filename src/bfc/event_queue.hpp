@@ -11,7 +11,7 @@ namespace bfc
 {
 
 // Polymorphic base for reactive queues, decoupled from T.
-template <typename cb_t = light_function<void()>>
+template <typename cb_t>
 class reactive_event_queue_base
 {
 public:
@@ -22,14 +22,11 @@ public:
     virtual void notify_callback() = 0;
 };
 
-template <typename T>
-class reactive_event_queue : public reactive_event_queue_base<>
+template <typename T, typename callback_t>
+class reactive_event_queue : public reactive_event_queue_base<callback_t>
 {
 public:
-    using callback_t = typename reactive_event_queue_base<>::callback_t;
-
     reactive_event_queue() = default;
-
     ~reactive_event_queue() = default;
 
     template <typename U>

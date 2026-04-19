@@ -1,12 +1,12 @@
+#include "bfc/function.hpp"
 #include <gtest/gtest.h>
 #include <bfc/cv_reactor.hpp>
 
-#include <deque>
 #include <thread>
 
 using namespace bfc;
 
-using r_cb_t = std::function<void()>;
+using r_cb_t = light_function<void()>;
 
 struct fake_reactor
 {
@@ -14,7 +14,7 @@ struct fake_reactor
     void wake_up(r_cb_t = nullptr){};
 };
 
-using queue_t = reactive_event_queue<uint64_t>;
+using queue_t = reactive_event_queue<uint64_t, r_cb_t>;
 
 struct counters_t
 {
@@ -163,8 +163,8 @@ TEST(cv_reactor, non_reactive_mt)
 
 TEST(cv_reactor, reactive_st)
 {
-    cv_reactor<> reactor;
-    reactive_event_queue<uint64_t> queue;
+    cv_reactor<r_cb_t> reactor;
+    reactive_event_queue<uint64_t, r_cb_t> queue;
 
     uint64_t i = 0;
     reactor.add_read_rdy(queue, [&reactor, &queue, &i](){
@@ -193,8 +193,8 @@ TEST(cv_reactor, reactive_st)
 
 TEST(cv_reactor, reactive_mt)
 {
-    cv_reactor<> reactor;
-    reactive_event_queue<uint64_t> queue;
+    cv_reactor<r_cb_t> reactor;
+    reactive_event_queue<uint64_t, r_cb_t> queue;
 
     reactor.add_read_rdy(queue, [&reactor, &queue](){
             auto rv = queue.pop();
