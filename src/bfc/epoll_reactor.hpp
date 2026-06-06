@@ -377,10 +377,14 @@ public:
         return m_reactor.add_read(fd, EPOLLIN|EPOLLRDHUP, std::move(cb));
     }
 
-    bool rem_read_rdy(fd_t fd)
+    bool rem_read_rdy(fd_t fd, cb_t done_cb = nullptr)
     {
-        m_reactor.wake_up([this, fd](){
+        m_reactor.wake_up([this, fd, done_cb = std::move(done_cb)]() mutable {
                 m_reactor.rem_read(fd);
+                if (done_cb)
+                {
+                    done_cb();
+                }
             });
         return true;
     }
@@ -395,10 +399,14 @@ public:
         return m_reactor.add_write(fd, std::move(cb));
     }
 
-    bool rem_write_rdy(fd_t fd)
+    bool rem_write_rdy(fd_t fd, cb_t done_cb = nullptr)
     {
-        m_reactor.wake_up([this, fd](){
+        m_reactor.wake_up([this, fd, done_cb = std::move(done_cb)]() mutable {
                 m_reactor.rem_write(fd);
+                if (done_cb)
+                {
+                    done_cb();
+                }
             });
         return true;
     }

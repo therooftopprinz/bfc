@@ -2,6 +2,8 @@
 #include <bfc/epoll_reactor.hpp>
 #include <bfc/socket.hpp>
 #include <atomic>
+#include <chrono>
+#include <thread>
 #include <netinet/tcp.h>
 
 // #undef ASSERT_NE
@@ -330,4 +332,128 @@ TEST(epoll_reactor, reactive)
     printf("counters.send: %zu\n", ctrs.client_write);
     printf("counters.recv: %zu\n", ctrs.server_read);
     printf("tput: %lf\n", tput);
+}
+
+namespace {
+
+constexpr uint16_t rem_test_port = 12347;
+
+static bool wait_until(const std::atomic<bool>& flag, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!flag.load(std::memory_order_acquire))
+    {
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
+static void connect_tcp_pair(bfc::socket& server, bfc::socket& client)
+{
+    bfc::socket acceptor(create_tcp4());
+    acceptor.set_sock_opt(SOL_SOCKET, SO_REUSEADDR, 1);
+    ASSERT_NE(-1, acceptor.bind(ip4_port_to_sockaddr(localhost4, rem_test_port)));
+    ASSERT_NE(-1, acceptor.listen());
+    ASSERT_NE(-1, client.connect(ip4_port_to_sockaddr(localhost4, rem_test_port)));
+    server = std::move(acceptor.accept(nullptr, nullptr));
+    ASSERT_NE(-1, server.fd());
+    ASSERT_NE(-1, client.fd());
+}
+
+} // namespace
+
+TEST(epoll_reactor, rem_read_rdy_invokes_done_cb_on_reactor_thread)
+{
+    reactor_t reactor;
+    bfc::socket client(create_tcp4());
+    bfc::socket server;
+    connect_tcp_pair(server, client);
+
+    std::atomic<bool> done_cb_called{false};
+    std::thread::id reactor_thread_id;
+    std::thread::id done_cb_thread_id;
+
+    std::thread reactor_thread([&](){
+        reactor_thread_id = std::this_thread::get_id();
+        reactor.run();
+    });
+
+    ASSERT_TRUE(reactor.add_read_rdy(server.fd(), [](){}));
+    ASSERT_TRUE(reactor.rem_read_rdy(server.fd(), [&](){
+        done_cb_called.store(true, std::memory_order_release);
+        done_cb_thread_id = std::this_thread::get_id();
+        reactor.stop();
+    }));
+
+    ASSERT_TRUE(wait_until(done_cb_called, std::chrono::seconds(5)));
+    reactor_thread.join();
+
+    EXPECT_EQ(done_cb_thread_id, reactor_thread_id);
+}
+
+TEST(epoll_reactor, rem_read_rdy_suppresses_further_notifications)
+{
+    reactor_t reactor;
+    bfc::socket client(create_tcp4());
+    bfc::socket server;
+    connect_tcp_pair(server, client);
+
+    std::atomic<uint64_t> read_count{0};
+    std::atomic<bool> removed{false};
+
+    std::thread reactor_thread([&](){
+        reactor.run();
+    });
+
+    ASSERT_TRUE(reactor.add_read_rdy(server.fd(), [&](){
+        read_count.fetch_add(1, std::memory_order_relaxed);
+    }));
+
+    ASSERT_TRUE(reactor.rem_read_rdy(server.fd(), [&](){
+        removed.store(true, std::memory_order_release);
+    }));
+    ASSERT_TRUE(wait_until(removed, std::chrono::seconds(5)));
+
+    uint64_t payload = 42;
+    buffer_view wb((std::byte*)&payload, sizeof(payload));
+    ASSERT_NE(-1, client.send(wb, 0));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    reactor.stop();
+    reactor_thread.join();
+
+    EXPECT_EQ(read_count.load(), 0u);
+}
+
+TEST(epoll_reactor, rem_write_rdy_invokes_done_cb_on_reactor_thread)
+{
+    reactor_t reactor;
+    bfc::socket client(create_tcp4());
+    bfc::socket server;
+    connect_tcp_pair(server, client);
+
+    std::atomic<bool> done_cb_called{false};
+    std::thread::id reactor_thread_id;
+    std::thread::id done_cb_thread_id;
+
+    std::thread reactor_thread([&](){
+        reactor_thread_id = std::this_thread::get_id();
+        reactor.run();
+    });
+
+    ASSERT_TRUE(reactor.add_write_rdy(client.fd(), [](){}));
+    ASSERT_TRUE(reactor.rem_write_rdy(client.fd(), [&](){
+        done_cb_called.store(true, std::memory_order_release);
+        done_cb_thread_id = std::this_thread::get_id();
+        reactor.stop();
+    }));
+
+    ASSERT_TRUE(wait_until(done_cb_called, std::chrono::seconds(5)));
+    reactor_thread.join();
+
+    EXPECT_EQ(done_cb_thread_id, reactor_thread_id);
 }
