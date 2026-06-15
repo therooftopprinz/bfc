@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cerrno>
 #include <string>
+#include <thread>
 #include <vector>
 #include <limits>
 #include <mutex>
@@ -235,8 +236,15 @@ struct poll_reactor
         return true;
     }
 
+    bool is_reactor_thread() const
+    {
+        return m_reactor_thread_id != std::thread::id{} &&
+               std::this_thread::get_id() == m_reactor_thread_id;
+    }
+
     void run()
     {
+        m_reactor_thread_id = std::this_thread::get_id();
         m_running = true;
         while (m_running)
         {
@@ -359,6 +367,7 @@ struct poll_reactor
 
             m_timer.schedule(timer_t::current_time_us());
         } // while (m_running)
+        m_reactor_thread_id = {};
     }
 
     void stop()
@@ -501,6 +510,7 @@ private:
     cb_t m_wake_cb = nullptr;
     std::atomic<bool> m_wake_pending{false};
     std::atomic<bool> m_running;
+    std::thread::id m_reactor_thread_id{};
 
     std::unordered_map<int, fd_entry_s> m_fd_entries;
     std::vector<int> m_pending_cleanup;
@@ -588,6 +598,11 @@ public:
     void wake_up(cb_t cb)
     {
         m_reactor.wake_up(std::move(cb));
+    }
+
+    bool is_reactor_thread() const
+    {
+        return m_reactor.is_reactor_thread();
     }
 
     void run()

@@ -457,3 +457,60 @@ TEST(epoll_reactor, rem_write_rdy_invokes_done_cb_on_reactor_thread)
 
     EXPECT_EQ(done_cb_thread_id, reactor_thread_id);
 }
+
+TEST(epoll_reactor, is_reactor_thread)
+{
+    reactor_t reactor;
+    bfc::socket client(create_tcp4());
+    bfc::socket server;
+    connect_tcp_pair(server, client);
+
+    EXPECT_FALSE(reactor.is_reactor_thread());
+
+    std::atomic<bool> checked_in_callback{false};
+
+    ASSERT_TRUE(reactor.add_read_rdy(server.fd(), [&](){
+        EXPECT_TRUE(reactor.is_reactor_thread());
+        checked_in_callback.store(true, std::memory_order_release);
+        reactor.stop();
+    }));
+
+    std::thread reactor_thread([&](){
+        reactor.run();
+    });
+
+    uint64_t payload = 1;
+    buffer_view wb((std::byte*)&payload, sizeof(payload));
+    ASSERT_NE(-1, client.send(wb, 0));
+
+    ASSERT_TRUE(wait_until(checked_in_callback, std::chrono::seconds(5)));
+    reactor_thread.join();
+
+    EXPECT_FALSE(reactor.is_reactor_thread());
+}
+
+TEST(epoll_reactor, wake_up_cb_runs_on_reactor_thread)
+{
+    reactor_t reactor;
+
+    std::atomic<bool> done_cb_called{false};
+    std::thread::id reactor_thread_id;
+    std::thread::id done_cb_thread_id;
+
+    std::thread reactor_thread([&](){
+        reactor_thread_id = std::this_thread::get_id();
+        reactor.run();
+    });
+
+    reactor.wake_up([&](){
+        EXPECT_TRUE(reactor.is_reactor_thread());
+        done_cb_called.store(true, std::memory_order_release);
+        done_cb_thread_id = std::this_thread::get_id();
+        reactor.stop();
+    });
+
+    ASSERT_TRUE(wait_until(done_cb_called, std::chrono::seconds(5)));
+    reactor_thread.join();
+
+    EXPECT_EQ(done_cb_thread_id, reactor_thread_id);
+}

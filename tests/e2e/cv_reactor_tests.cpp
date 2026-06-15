@@ -2,6 +2,8 @@
 #include <gtest/gtest.h>
 #include <bfc/cv_reactor.hpp>
 
+#include <atomic>
+#include <chrono>
 #include <thread>
 
 using namespace bfc;
@@ -25,6 +27,25 @@ struct counters_t
 };
 
 constexpr uint64_t N = 1000000;
+
+namespace {
+
+bool wait_until(const std::atomic<bool>& flag,
+                std::chrono::milliseconds timeout = std::chrono::seconds(5))
+{
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!flag.load(std::memory_order_acquire))
+    {
+        if (std::chrono::steady_clock::now() >= deadline)
+        {
+            return false;
+        }
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+} // namespace
 
 using event_queue_t = event_queue<uint64_t>;
 
@@ -159,6 +180,109 @@ TEST(cv_reactor, non_reactive_mt)
     tput /= 1000000;
 
     printf("tput: %lf\n", tput);
+}
+
+TEST(cv_reactor, is_reactor_thread)
+{
+    cv_reactor<r_cb_t> reactor;
+    reactive_event_queue<uint64_t, r_cb_t> queue;
+
+    EXPECT_FALSE(reactor.is_reactor_thread());
+
+    std::atomic<bool> checked_in_callback{false};
+
+    reactor.add_read_rdy(queue, [&](){
+        EXPECT_TRUE(reactor.is_reactor_thread());
+        checked_in_callback.store(true, std::memory_order_release);
+        reactor.stop();
+    });
+
+    std::thread reactor_thread([&](){
+        reactor.run();
+    });
+
+    queue.push(1);
+    reactor.wake_up();
+
+    while (!checked_in_callback.load(std::memory_order_acquire))
+    {
+        std::this_thread::yield();
+    }
+    reactor_thread.join();
+
+    EXPECT_FALSE(reactor.is_reactor_thread());
+}
+
+TEST(cv_reactor, wake_up_cb_runs_on_reactor_thread)
+{
+    cv_reactor<r_cb_t> reactor;
+
+    std::atomic<bool> done_cb_called{false};
+    std::thread::id reactor_thread_id;
+    std::thread::id done_cb_thread_id;
+
+    std::thread reactor_thread([&](){
+        reactor_thread_id = std::this_thread::get_id();
+        reactor.run();
+    });
+
+    reactor.wake_up([&](){
+        EXPECT_TRUE(reactor.is_reactor_thread());
+        done_cb_called.store(true, std::memory_order_release);
+        done_cb_thread_id = std::this_thread::get_id();
+        reactor.stop();
+    });
+
+    ASSERT_TRUE(wait_until(done_cb_called));
+    reactor_thread.join();
+
+    EXPECT_EQ(done_cb_thread_id, reactor_thread_id);
+}
+
+TEST(cv_reactor, wake_up_cb_before_run)
+{
+    cv_reactor<r_cb_t> reactor;
+    std::atomic<bool> called{false};
+
+    reactor.wake_up([&](){
+        called.store(true, std::memory_order_release);
+        reactor.stop();
+    });
+
+    reactor.run();
+
+    EXPECT_TRUE(called.load(std::memory_order_acquire));
+}
+
+TEST(cv_reactor, push_without_wake_up_requires_explicit_wakeup)
+{
+    cv_reactor<r_cb_t> reactor(200);
+    reactive_event_queue<uint64_t, r_cb_t> queue;
+
+    std::atomic<bool> callback_called{false};
+    std::atomic<bool> reactor_started{false};
+
+    reactor.add_read_rdy(queue, [&](){
+        callback_called.store(true, std::memory_order_release);
+    });
+
+    std::thread reactor_thread([&](){
+        reactor_started.store(true, std::memory_order_release);
+        reactor.run();
+    });
+
+    ASSERT_TRUE(wait_until(reactor_started));
+
+    queue.push(1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+    EXPECT_FALSE(callback_called.load(std::memory_order_acquire));
+
+    reactor.wake_up();
+    ASSERT_TRUE(wait_until(callback_called));
+
+    reactor.stop();
+    reactor_thread.join();
 }
 
 TEST(cv_reactor, reactive_st)

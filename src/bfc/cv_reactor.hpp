@@ -4,7 +4,9 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <thread>
 #include <list>
+#include <vector>
 #include <algorithm>
 
 #include <bfc/function.hpp>
@@ -61,8 +63,15 @@ public:
         return true;
     }
 
+    bool is_reactor_thread() const
+    {
+        return m_reactor_thread_id != std::thread::id{} &&
+               std::this_thread::get_id() == m_reactor_thread_id;
+    }
+
     void run()
     {
+        m_reactor_thread_id = std::this_thread::get_id();
         m_running = true;
         while (m_running)
         {
@@ -91,6 +100,11 @@ public:
                         return m_wakeup_req || !m_running;
                     });
 
+                if (!m_running)
+                {
+                    break;
+                }
+
                 if (m_wakeup_req)
                 {
                     m_wakeup_req = false;
@@ -113,12 +127,30 @@ public:
                 }
             }
 
+            {
+                std::unique_lock<std::mutex> lg(m_wake_up_cb_mtx);
+                auto cbl = std::move(m_wake_up_cb);
+                lg.unlock();
+
+                for (auto& cb : cbl)
+                {
+                    cb();
+                }
+            }
+
             m_timer.schedule(timer_t::current_time_us());
         }
+        m_reactor_thread_id = {};
     }
 
-    void wake_up(cb_t = nullptr)
+    void wake_up(cb_t cb = nullptr)
     {
+        if (cb)
+        {
+            std::unique_lock<std::mutex> lg(m_wake_up_cb_mtx);
+            m_wake_up_cb.emplace_back(std::move(cb));
+        }
+
         std::unique_lock<std::mutex> lg(m_wakeup_mtx);
         m_wakeup_req = true;
         m_cv.notify_one();
@@ -142,7 +174,11 @@ public:
     std::mutex m_ctx_mtx;
     std::list<context*> m_contexts;
 
+    std::mutex m_wake_up_cb_mtx;
+    std::vector<cb_t> m_wake_up_cb;
+
     std::atomic<bool> m_running{false};
+    std::thread::id m_reactor_thread_id{};
 };
 
 } // namespace bfc
