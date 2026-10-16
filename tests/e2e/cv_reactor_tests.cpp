@@ -355,5 +355,38 @@ TEST(cv_reactor, reactive_mt)
 
 TEST(cv_reactor, minimum_timer_step)
 {
+#if defined(__linux__)
+    static_assert(bfc::cv_reactor<>::minimum_timer_step() == 1);
+#else
     static_assert(bfc::cv_reactor<>::minimum_timer_step() == 1000);
+#endif
+}
+
+// A timer due before the idle timeout must not wait out the whole timeout
+// (the deadline was compared in us against a ms timeout).
+TEST(cv_reactor, timer_before_idle_timeout_fires_on_time)
+{
+    bfc::cv_reactor<std::function<void()>> reactor(100);
+    auto t0 = std::chrono::steady_clock::now();
+    reactor.get_timer().wait_ms(5, [&](){ reactor.stop(); });
+    reactor.run();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+    EXPECT_GE(elapsed.count(), 5);
+    EXPECT_LT(elapsed.count(), 50);
+}
+
+TEST(cv_reactor, sub_millisecond_timer_chain)
+{
+    bfc::cv_reactor<std::function<void()>> reactor(100);
+    auto t0 = std::chrono::steady_clock::now();
+    int fired = 0;
+    for (int i = 0; i < 100; ++i)
+    {
+        reactor.get_timer().wait_us(250 * int64_t(i + 1), [&](){ ++fired; });
+    }
+    reactor.get_timer().wait_us(250 * 100 + 500, [&](){ reactor.stop(); });
+    reactor.run();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0);
+    EXPECT_EQ(fired, 100);
+    EXPECT_LT(elapsed.count(), 80);
 }

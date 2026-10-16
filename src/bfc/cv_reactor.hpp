@@ -65,9 +65,15 @@ public:
 
     // @brief Smallest timer step the reactor can wait for, in microseconds.
     // Timers due sooner than this after the previous wait may fire late.
+    // condition_variable waits are only as fine as the platform clock (e.g.
+    // FreeRTOS ticks), so only Linux claims microseconds.
     static constexpr uint64_t minimum_timer_step()
     {
+#if defined(__linux__)
+        return 1;
+#else
         return 1000;
+#endif
     }
 
     bool is_reactor_thread() const
@@ -85,24 +91,24 @@ public:
             int64_t next_deadline_us = 0;
             bool has_deadline = m_timer.get_next_deadline_us(next_deadline_us);
             auto now_us = timer_t::current_time_us();
-            auto timeout_ms = m_timeout_ms;
+            int64_t timeout_us = static_cast<int64_t>(m_timeout_ms) * 1000;
             if (has_deadline)
             {
                 auto diff = next_deadline_us - now_us;
                 if (diff <= 0)
                 {
-                    timeout_ms = 0;
+                    timeout_us = 0;
                 }
-                else if (static_cast<size_t>(diff) < timeout_ms)
+                else if (diff < timeout_us)
                 {
-                    timeout_ms = static_cast<size_t>(diff / 1000);
+                    timeout_us = diff;
                 }
             }
 
             {
                 std::unique_lock<std::mutex> lg(m_wakeup_mtx);
 
-                m_cv.wait_for(lg, std::chrono::milliseconds(timeout_ms), [this]()
+                m_cv.wait_for(lg, std::chrono::microseconds(timeout_us), [this]()
                     {
                         return m_wakeup_req || !m_running;
                     });
