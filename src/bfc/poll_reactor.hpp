@@ -600,6 +600,13 @@ public:
         m_reactor.wake_up(std::move(cb));
     }
 
+    // @brief Smallest timer step the reactor can wait for, in microseconds.
+    // Timers due sooner than this after the previous wait may fire late.
+    static constexpr uint64_t minimum_timer_step()
+    {
+        return 1000;
+    }
+
     bool is_reactor_thread() const
     {
         return m_reactor.is_reactor_thread();

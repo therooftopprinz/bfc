@@ -15,10 +15,23 @@
 
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
+#include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <bfc/function.hpp>
 #include <bfc/timer.hpp>
+
+// epoll_pwait2 (Linux 5.11+) gives microsecond timer precision; without it
+// epoll_wait is used with the timeout rounded up to whole milliseconds.
+// Define BFC_NO_EPOLL_PWAIT2 to force epoll_wait.
+#if defined(BFC_NO_EPOLL_PWAIT2)
+#elif defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 35))
+#define BFC_EPOLL_PWAIT2 1
+#elif defined(SYS_epoll_pwait2)
+#define BFC_EPOLL_PWAIT2 1
+#define BFC_EPOLL_PWAIT2_SYSCALL 1
+#endif
 
 namespace bfc
 {
@@ -222,33 +235,23 @@ struct epoll_reactor
         m_running = true;
         while (m_running)
         {
-            int timeout_ms = -1;
+            timespec timeout{};
+            const timespec* timeout_ptr = nullptr;
             int64_t next_deadline_us = 0;
             bool has_deadline = m_timer.get_next_deadline_us(next_deadline_us);
             if (has_deadline)
             {
                 auto now_us = timer_t::current_time_us();
                 auto diff = next_deadline_us - now_us;
-                if (diff <= 0)
+                if (diff > 0)
                 {
-                    timeout_ms = 0;
+                    timeout.tv_sec = static_cast<time_t>(diff / 1000000);
+                    timeout.tv_nsec = static_cast<long>((diff % 1000000) * 1000);
                 }
-                else
-                {
-                    // convert microseconds to milliseconds for epoll_wait
-                    auto diff_ms = diff / 1000;
-                    if (diff_ms > static_cast<int64_t>(std::numeric_limits<int>::max()))
-                    {
-                        timeout_ms = std::numeric_limits<int>::max();
-                    }
-                    else
-                    {
-                        timeout_ms = static_cast<int>(diff_ms);
-                    }
-                }
+                timeout_ptr = &timeout;
             }
 
-            auto nfds = epoll_wait(m_epoll_fd, m_event_cache.data(), m_event_cache.size(), timeout_ms);
+            auto nfds = wait(timeout_ptr);
             if (-1 == nfds)
             {
                 if (EINTR != errno)
@@ -294,7 +297,8 @@ struct epoll_reactor
             for (auto fd : m_pending_cleanup)
             {
                 auto it = m_fd_entries.find(fd);
-                if (it != m_fd_entries.end())
+                // Skip entries re-armed by add_read/add_write after removal
+                if (it != m_fd_entries.end() && !it->second.read_active && !it->second.write_active)
                 {
                     auto& entry = it->second;
                     if (entry.write_ctx.fd != -1)
@@ -335,6 +339,23 @@ struct epoll_reactor
     }
 
 private:
+    int wait(const timespec* p_timeout)
+    {
+#if defined(BFC_EPOLL_PWAIT2_SYSCALL)
+        return static_cast<int>(syscall(SYS_epoll_pwait2, m_epoll_fd, m_event_cache.data(), m_event_cache.size(), p_timeout, nullptr, size_t(0)));
+#elif defined(BFC_EPOLL_PWAIT2)
+        return epoll_pwait2(m_epoll_fd, m_event_cache.data(), m_event_cache.size(), p_timeout, nullptr);
+#else
+        int timeout_ms = -1;
+        if (p_timeout)
+        {
+            int64_t ms = int64_t(p_timeout->tv_sec) * 1000 + (p_timeout->tv_nsec + 999999) / 1000000;
+            timeout_ms = ms > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : int(ms);
+        }
+        return epoll_wait(m_epoll_fd, m_event_cache.data(), m_event_cache.size(), timeout_ms);
+#endif
+    }
+
     std::vector<epoll_event> m_event_cache;
 
     std::mutex m_wake_up_cb_mtx;
@@ -388,6 +409,17 @@ public:
 
     bool rem_read_rdy(fd_t fd, cb_t done_cb = nullptr)
     {
+        // On the reactor thread remove now: the caller may close the fd and free the
+        // callback's owner while an event for this fd is still pending in the current batch.
+        if (m_reactor.is_reactor_thread())
+        {
+            m_reactor.rem_read(fd);
+            if (done_cb)
+            {
+                done_cb();
+            }
+            return true;
+        }
         m_reactor.wake_up([this, fd, done_cb = std::move(done_cb)]() mutable {
                 m_reactor.rem_read(fd);
                 if (done_cb)
@@ -410,6 +442,17 @@ public:
 
     bool rem_write_rdy(fd_t fd, cb_t done_cb = nullptr)
     {
+        // On the reactor thread remove now: the caller may close the fd and free the
+        // callback's owner while an event for this fd is still pending in the current batch.
+        if (m_reactor.is_reactor_thread())
+        {
+            m_reactor.rem_write(fd);
+            if (done_cb)
+            {
+                done_cb();
+            }
+            return true;
+        }
         m_reactor.wake_up([this, fd, done_cb = std::move(done_cb)]() mutable {
                 m_reactor.rem_write(fd);
                 if (done_cb)
@@ -428,6 +471,17 @@ public:
     void wake_up(cb_t cb)
     {
         m_reactor.wake_up(std::move(cb));
+    }
+
+    // @brief Smallest timer step the reactor can wait for, in microseconds.
+    // Timers due sooner than this after the previous wait may fire late.
+    static constexpr uint64_t minimum_timer_step()
+    {
+#if defined(BFC_EPOLL_PWAIT2)
+        return 1;
+#else
+        return 1000;
+#endif
     }
 
     bool is_reactor_thread() const

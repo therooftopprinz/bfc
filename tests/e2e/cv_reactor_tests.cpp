@@ -352,3 +352,8 @@ TEST(cv_reactor, reactive_mt)
 
     printf("tput: %lf\n", tput);
 }
+
+TEST(cv_reactor, minimum_timer_step)
+{
+    static_assert(bfc::cv_reactor<>::minimum_timer_step() == 1000);
+}
