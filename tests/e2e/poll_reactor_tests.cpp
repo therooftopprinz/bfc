@@ -495,3 +495,155 @@ TEST(poll_reactor, minimum_timer_step)
 {
     static_assert(bfc::poll_reactor<>::minimum_timer_step() == 1000);
 }
+
+namespace {
+
+// Non-blocking UDP socket on 127.0.0.1, ephemeral port.
+static int open_udp(sockaddr_in& addr)
+{
+    int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    socklen_t len = sizeof(addr);
+    ::bind(fd, (sockaddr*)&addr, sizeof(addr));
+    ::getsockname(fd, (sockaddr*)&addr, &len);
+    return fd;
+}
+
+static void send_udp(const sockaddr_in& to)
+{
+    int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+    uint8_t b = 1;
+    ::sendto(fd, &b, 1, 0, (const sockaddr*)&to, sizeof(to));
+    ::close(fd);
+}
+
+static void drain(int fd)
+{
+    uint8_t buf[64];
+    while (::recv(fd, buf, sizeof(buf), 0) > 0)
+    {
+    }
+}
+
+} // namespace
+
+// On the reactor thread rem_read_rdy takes the fd out of the poll set at once,
+// so closing it right after is safe (lwIP's poll fails with EBADF on a closed
+// fd; Linux reports POLLNVAL, which used to reach the removed callback).
+TEST(poll_reactor, rem_read_rdy_on_reactor_thread_allows_immediate_close)
+{
+    reactor_t reactor;
+    sockaddr_in addr;
+    const int fd = open_udp(addr);
+    std::atomic<uint64_t> calls_after_close{0};
+    std::atomic<bool> closed{false};
+    std::atomic<bool> stopped{false};
+
+    ASSERT_TRUE(reactor.add_read_rdy(fd, [&](){
+        if (closed.load())
+        {
+            calls_after_close.fetch_add(1);
+            return;
+        }
+        drain(fd);
+    }));
+
+    std::thread reactor_thread([&](){
+        reactor.run();
+        stopped.store(true, std::memory_order_release);
+    });
+
+    reactor.wake_up([&](){
+        ASSERT_TRUE(reactor.rem_read_rdy(fd));
+        ::close(fd);
+        closed.store(true);
+        // Let a few iterations poll with the closed fd number before stopping.
+        reactor.wake_up([&](){
+            reactor.wake_up([&](){ reactor.stop(); });
+        });
+    });
+
+    ASSERT_TRUE(wait_until(stopped, std::chrono::seconds(5)));
+    reactor_thread.join();
+    EXPECT_EQ(calls_after_close.load(), 0u);
+}
+
+// A callback may remove (and close) its own fd; its captures must stay valid
+// until it returns.
+TEST(poll_reactor, read_cb_may_remove_itself)
+{
+    reactor_t reactor;
+    sockaddr_in addr;
+    const int fd = open_udp(addr);
+    auto state = std::make_shared<std::string>(4096, 'x');
+    std::atomic<size_t> seen_size{0};
+    std::atomic<bool> stopped{false};
+
+    ASSERT_TRUE(reactor.add_read_rdy(fd, [&reactor, fd, state, &seen_size](){
+        drain(fd);
+        reactor.rem_read_rdy(fd);
+        ::close(fd);
+        seen_size.store(state->size());  // captures still alive after removal
+        reactor.stop();
+    }));
+    state.reset();
+
+    std::thread reactor_thread([&](){
+        reactor.run();
+        stopped.store(true, std::memory_order_release);
+    });
+    send_udp(addr);
+
+    ASSERT_TRUE(wait_until(stopped, std::chrono::seconds(5)));
+    reactor_thread.join();
+    EXPECT_EQ(seen_size.load(), 4096u);
+}
+
+// Remove + close + reopen in one callback typically reuses the fd number; the
+// new registration must survive the removed one's cleanup.
+TEST(poll_reactor, fd_number_reused_in_same_iteration)
+{
+    reactor_t reactor;
+    sockaddr_in addr_a;
+    const int fd_a = open_udp(addr_a);
+    std::atomic<int> fd_b{-1};
+    sockaddr_in addr_b{};
+    std::atomic<bool> b_ready{false};
+    std::atomic<bool> b_read{false};
+    std::atomic<bool> stopped{false};
+
+    ASSERT_TRUE(reactor.add_read_rdy(fd_a, [&](){
+        drain(fd_a);
+        reactor.rem_read_rdy(fd_a);
+        ::close(fd_a);
+        const int b = open_udp(addr_b);
+        fd_b.store(b);
+        reactor.add_read_rdy(b, [&, b](){
+            drain(b);
+            b_read.store(true, std::memory_order_release);
+            reactor.stop();
+        });
+        b_ready.store(true, std::memory_order_release);
+    }));
+
+    std::thread reactor_thread([&](){
+        reactor.run();
+        stopped.store(true, std::memory_order_release);
+    });
+    send_udp(addr_a);
+    ASSERT_TRUE(wait_until(b_ready, std::chrono::seconds(5)));
+    EXPECT_EQ(fd_b.load(), fd_a);  // the case this test is about
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    send_udp(addr_b);
+
+    const bool got = wait_until(b_read, std::chrono::seconds(2));
+    if (!got)
+    {
+        reactor.stop();
+    }
+    reactor_thread.join();
+    ::close(fd_b.load());
+    EXPECT_TRUE(got);
+}
