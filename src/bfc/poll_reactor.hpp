@@ -50,6 +50,8 @@ struct poll_reactor
         bool write_active = false;
         size_t read_poll_index = invalid_index();
         size_t write_poll_index = invalid_index();
+        uint64_t read_gen = 0;
+        uint64_t write_gen = 0;
 
         static constexpr size_t invalid_index()
         {
@@ -62,6 +64,7 @@ struct poll_reactor
         pollfd pfd{};
         int owner_fd = -1;
         poll_kind kind = poll_kind::wake;
+        uint64_t gen = 0;  // unique per add; tells a re-added fd number from the removed one
     };
 
     poll_reactor(const poll_reactor&) = delete;
@@ -126,6 +129,7 @@ struct poll_reactor
         if (entry.read_poll_index == fd_entry_s::invalid_index())
         {
             entry.read_poll_index = add_poll_entry(fd, fd, poll_kind::read, static_cast<short>(events));
+            entry.read_gen = m_poll_entries[entry.read_poll_index].gen;
         }
         else
         {
@@ -148,7 +152,7 @@ struct poll_reactor
         {
             remove_poll_entry_by_index(entry.read_poll_index);
             entry.read_active = false;
-            ctx.cb = nullptr;
+            retire_cb(ctx.cb);
             ctx.fd = -1;
             entry.read_poll_index = fd_entry_s::invalid_index();
         }
@@ -181,6 +185,7 @@ struct poll_reactor
         if (entry.write_poll_index == fd_entry_s::invalid_index())
         {
             entry.write_poll_index = add_poll_entry(ctx.fd, fd, poll_kind::write, 0);
+            entry.write_gen = m_poll_entries[entry.write_poll_index].gen;
         }
         else
         {
@@ -204,7 +209,7 @@ struct poll_reactor
             remove_poll_entry_by_index(entry.write_poll_index);
             close(ctx.fd);
             ctx.fd = -1;
-            ctx.cb = nullptr;
+            retire_cb(ctx.cb);
             entry.write_active = false;
             entry.write_poll_index = fd_entry_s::invalid_index();
         }
@@ -274,8 +279,11 @@ struct poll_reactor
             }
 
             // poll mutates revents, so build a temporary list each iteration.
+            // Callbacks may remove entries (which reorders m_poll_entries), so
+            // dispatch from a snapshot.
             std::vector<pollfd> poll_fds;
             poll_fds.reserve(m_poll_entries.size());
+            m_dispatch.assign(m_poll_entries.begin(), m_poll_entries.end());
             for (auto& entry : m_poll_entries)
             {
                 entry.pfd.revents = 0;
@@ -302,7 +310,7 @@ struct poll_reactor
                         continue;
                     }
 
-                    auto item = m_poll_entries[i];
+                    const auto& item = m_dispatch[i];
                     if (item.kind == poll_kind::wake)
                     {
                         if (m_wake_cb)
@@ -321,7 +329,7 @@ struct poll_reactor
                     if (item.kind == poll_kind::read)
                     {
                         auto& ctx = it->second.read_ctx;
-                        if (ctx.cb)
+                        if (it->second.read_active && it->second.read_gen == item.gen && ctx.cb)
                         {
                             ctx.cb();
                         }
@@ -329,7 +337,7 @@ struct poll_reactor
                     else
                     {
                         auto& ctx = it->second.write_ctx;
-                        if (ctx.cb)
+                        if (it->second.write_active && it->second.write_gen == item.gen && ctx.cb)
                         {
                             // emulate one-shot write notifications: callback must re-arm via req_write().
                             set_poll_events(it->second.write_poll_index, 0);
@@ -353,7 +361,8 @@ struct poll_reactor
             for (auto fd : m_pending_cleanup)
             {
                 auto it = m_fd_entries.find(fd);
-                if (it != m_fd_entries.end())
+                // Skip an fd number that was added again since its removal.
+                if (it != m_fd_entries.end() && !it->second.read_active && !it->second.write_active)
                 {
                     auto& entry = it->second;
                     if (entry.write_ctx.fd != -1)
@@ -364,6 +373,7 @@ struct poll_reactor
                 }
             }
             m_pending_cleanup.clear();
+            m_retired_cbs.clear();
 
             m_timer.schedule(timer_t::current_time_us());
         } // while (m_running)
@@ -419,6 +429,17 @@ struct poll_reactor
     }
 
 private:
+    // A removed callback may be the one running; keep it until the end of
+    // the iteration.
+    void retire_cb(cb_t& cb)
+    {
+        if (cb)
+        {
+            m_retired_cbs.emplace_back(std::move(cb));
+        }
+        cb = nullptr;
+    }
+
     void set_non_blocking(int fd)
     {
         auto flags = fcntl(fd, F_GETFL, 0);
@@ -441,6 +462,7 @@ private:
         entry.pfd.revents = 0;
         entry.owner_fd = owner_fd;
         entry.kind = kind;
+        entry.gen = ++m_gen;
         m_poll_entries.emplace_back(entry);
         return m_poll_entries.size() - 1;
     }
@@ -514,6 +536,9 @@ private:
 
     std::unordered_map<int, fd_entry_s> m_fd_entries;
     std::vector<int> m_pending_cleanup;
+    std::vector<poll_entry_s> m_dispatch;
+    uint64_t m_gen = 0;
+    std::vector<cb_t> m_retired_cbs;
 
     using timer_t = timer<cb_t>;
     timer_t m_timer;
@@ -556,8 +581,21 @@ public:
         return m_reactor.add_read(fd, read_events, std::move(cb));
     }
 
+    // On the reactor thread the fd leaves the poll set right away, so the
+    // caller may close it next: poll() on a closed fd fails with EBADF on some
+    // platforms (lwIP) instead of reporting POLLNVAL. done_cb still runs later
+    // on the reactor thread. From other threads removal is deferred as before.
     bool rem_read_rdy(fd_t fd, cb_t done_cb = nullptr)
     {
+        if (m_reactor.is_reactor_thread())
+        {
+            m_reactor.rem_read(fd);
+            if (done_cb)
+            {
+                m_reactor.wake_up(std::move(done_cb));
+            }
+            return true;
+        }
         m_reactor.wake_up([this, fd, done_cb = std::move(done_cb)]() mutable {
             m_reactor.rem_read(fd);
             if (done_cb)
@@ -578,8 +616,18 @@ public:
         return m_reactor.add_write(fd, std::move(cb));
     }
 
+    // See rem_read_rdy.
     bool rem_write_rdy(fd_t fd, cb_t done_cb = nullptr)
     {
+        if (m_reactor.is_reactor_thread())
+        {
+            m_reactor.rem_write(fd);
+            if (done_cb)
+            {
+                m_reactor.wake_up(std::move(done_cb));
+            }
+            return true;
+        }
         m_reactor.wake_up([this, fd, done_cb = std::move(done_cb)]() mutable {
             m_reactor.rem_write(fd);
             if (done_cb)
