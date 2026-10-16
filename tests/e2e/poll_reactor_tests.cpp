@@ -491,6 +491,11 @@ TEST(poll_reactor, wake_up_cb_runs_on_reactor_thread)
     EXPECT_EQ(done_cb_thread_id, reactor_thread_id);
 }
 
+TEST(poll_reactor, minimum_timer_step)
+{
+    static_assert(bfc::poll_reactor<>::minimum_timer_step() == 1000);
+}
+
 namespace {
 
 // Non-blocking UDP socket on 127.0.0.1, ephemeral port.
