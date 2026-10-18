@@ -1,11 +1,12 @@
 #ifndef __BFC_SHARED_SIZED_BUFFER_HPP__
 #define __BFC_SHARED_SIZED_BUFFER_HPP__
 
+#include <atomic>     // std::atomic
 #include <cstddef>    // std::byte, size_t
 #include <cstdint>    // uint8_t
 #include <cstring>    // std::memcpy
 #include <functional> // std::function
-#include <memory>     // std::shared_ptr
+#include <utility>    // std::exchange
 
 #include <bfc/buffer.hpp>
 
@@ -16,6 +17,12 @@ namespace bfc
 // logical size (like bfc::sized_buffer, but shared). Several views may
 // reference the same bytes at different offsets; the storage is released
 // when the last view goes away.
+//
+// The refcount is an intrusive std::atomic, not std::shared_ptr: toolchains
+// whose libstdc++ lacks the atomic lock policy (ESP-IDF's riscv32-esp-elf)
+// give every shared_ptr control block its own pthread mutex. On ESP-IDF that
+// is a FreeRTOS semaphore in internal RAM per buffer, and when internal RAM
+// runs out its init fails silently and destroying the buffer faults.
 class shared_sized_buffer
 {
 public:
@@ -36,32 +43,52 @@ public:
         std::byte* bytes = nullptr;
         size_t capacity = 0;
         std::function<void(std::byte*)> release;
+        std::atomic<long> refs{1};
     };
 
     shared_sized_buffer() = default;
-    shared_sized_buffer(const shared_sized_buffer&) = default;
-    shared_sized_buffer& operator=(const shared_sized_buffer&) = default;
 
-    shared_sized_buffer(shared_sized_buffer&& p_other) noexcept
-        : m_storage(std::move(p_other.m_storage))
+    shared_sized_buffer(const shared_sized_buffer& p_other) noexcept
+        : m_storage(acquire(p_other.m_storage))
         , m_offset(p_other.m_offset)
         , m_size(p_other.m_size)
     {
-        p_other.m_offset = 0;
-        p_other.m_size = 0;
+    }
+
+    shared_sized_buffer& operator=(const shared_sized_buffer& p_other) noexcept
+    {
+        if (this != &p_other)
+        {
+            storage* old = std::exchange(m_storage, acquire(p_other.m_storage));
+            m_offset = p_other.m_offset;
+            m_size = p_other.m_size;
+            release_ref(old);
+        }
+        return *this;
+    }
+
+    shared_sized_buffer(shared_sized_buffer&& p_other) noexcept
+        : m_storage(std::exchange(p_other.m_storage, nullptr))
+        , m_offset(std::exchange(p_other.m_offset, 0))
+        , m_size(std::exchange(p_other.m_size, 0))
+    {
     }
 
     shared_sized_buffer& operator=(shared_sized_buffer&& p_other) noexcept
     {
         if (this != &p_other)
         {
-            m_storage = std::move(p_other.m_storage);
-            m_offset = p_other.m_offset;
-            m_size = p_other.m_size;
-            p_other.m_offset = 0;
-            p_other.m_size = 0;
+            storage* old = std::exchange(m_storage, std::exchange(p_other.m_storage, nullptr));
+            m_offset = std::exchange(p_other.m_offset, 0);
+            m_size = std::exchange(p_other.m_size, 0);
+            release_ref(old);
         }
         return *this;
+    }
+
+    ~shared_sized_buffer()
+    {
+        release_ref(m_storage);
     }
 
     // @brief Allocate p_size bytes and copy p_data into them.
@@ -85,11 +112,12 @@ public:
         {
             return out;
         }
-        auto st = std::make_shared<storage>();
-        st->bytes = new std::byte[p_capacity];
-        st->capacity = p_capacity;
-        st->release = [](std::byte* p) { delete[] p; };
-        out.m_storage = std::move(st);
+        // Owned by out before the bytes are allocated, so a throwing
+        // new[] does not leak the storage.
+        out.m_storage = new storage();
+        out.m_storage->bytes = new std::byte[p_capacity];
+        out.m_storage->capacity = p_capacity;
+        out.m_storage->release = [](std::byte* p) { delete[] p; };
         return out;
     }
 
@@ -108,11 +136,11 @@ public:
             }
             return out;
         }
-        auto st = std::make_shared<storage>();
+        auto* st = new storage();
         st->bytes = p_data;
         st->capacity = p_capacity;
         st->release = std::move(p_release);
-        out.m_storage = std::move(st);
+        out.m_storage = st;
         out.m_size = p_size;
         return out;
     }
@@ -160,19 +188,21 @@ public:
         return const_buffer_view(data(), size());
     }
 
-    std::shared_ptr<storage> get_storage() const noexcept
+    // @brief The shared storage (identity only; views of the same bytes
+    // return the same pointer), nullptr when empty.
+    const storage* get_storage() const noexcept
     {
         return m_storage;
     }
 
     long use_count() const noexcept
     {
-        return m_storage ? m_storage.use_count() : 0;
+        return m_storage ? m_storage->refs.load(std::memory_order_relaxed) : 0;
     }
 
     void clear() noexcept
     {
-        m_storage.reset();
+        release_ref(std::exchange(m_storage, nullptr));
         m_offset = 0;
         m_size = 0;
     }
@@ -218,14 +248,31 @@ public:
         {
             return out;
         }
-        out.m_storage = m_storage;
+        out.m_storage = acquire(m_storage);
         out.m_offset = m_offset + p_offset;
         out.m_size = p_size;
         return out;
     }
 
 private:
-    std::shared_ptr<storage> m_storage;
+    static storage* acquire(storage* p_storage) noexcept
+    {
+        if (p_storage)
+        {
+            p_storage->refs.fetch_add(1, std::memory_order_relaxed);
+        }
+        return p_storage;
+    }
+
+    static void release_ref(storage* p_storage) noexcept
+    {
+        if (p_storage && 1 == p_storage->refs.fetch_sub(1, std::memory_order_acq_rel))
+        {
+            delete p_storage;
+        }
+    }
+
+    storage* m_storage = nullptr;
     size_t m_offset = 0;
     size_t m_size = 0;
 };

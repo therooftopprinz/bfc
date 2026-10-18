@@ -2,6 +2,10 @@
 
 #include <bfc/shared_sized_buffer.hpp>
 
+#include <atomic>
+#include <thread>
+#include <vector>
+
 using namespace bfc;
 
 TEST(shared_sized_buffer, copy_from_and_subview_share_storage)
@@ -64,4 +68,55 @@ TEST(shared_sized_buffer, adopt_releases_on_last_owner)
         EXPECT_EQ(released, 0);
     }
     EXPECT_EQ(released, 1);
+}
+
+TEST(shared_sized_buffer, assignment_releases_previous_storage)
+{
+    int released_a = 0;
+    int released_b = 0;
+    auto a = shared_sized_buffer::adopt(new std::byte[4], 4, 4, [&](std::byte* p){ ++released_a; delete[] p; });
+    auto b = shared_sized_buffer::adopt(new std::byte[4], 4, 4, [&](std::byte* p){ ++released_b; delete[] p; });
+
+    auto& self = a;
+    a = self;
+    a = std::move(self);
+    EXPECT_EQ(a.use_count(), 1);
+    EXPECT_EQ(released_a, 0);
+
+    auto c = a;
+    c = b; // drops one ref of a
+    EXPECT_EQ(a.use_count(), 1);
+    EXPECT_EQ(b.use_count(), 2);
+    a = std::move(c); // a's storage released, a now holds b's
+    EXPECT_EQ(released_a, 1);
+    EXPECT_TRUE(c.empty());
+    EXPECT_EQ(b.use_count(), 2);
+    a.clear();
+    b.clear();
+    EXPECT_EQ(released_b, 1);
+}
+
+TEST(shared_sized_buffer, concurrent_copies_release_once)
+{
+    std::atomic<int> released{0};
+    auto buf = shared_sized_buffer::adopt(new std::byte[8], 8, 8,
+        [&](std::byte* p){ released.fetch_add(1); delete[] p; });
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t)
+    {
+        threads.emplace_back([copy = buf]() {
+            for (int i = 0; i < 20000; ++i)
+            {
+                shared_sized_buffer a = copy;
+                shared_sized_buffer b = a.subview(1, 2);
+                a = std::move(b);
+            }
+        });
+    }
+    buf.clear();
+    for (auto& t : threads)
+    {
+        t.join();
+    }
+    EXPECT_EQ(released.load(), 1);
 }
