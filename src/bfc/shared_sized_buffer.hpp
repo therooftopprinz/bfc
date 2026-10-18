@@ -112,11 +112,12 @@ public:
         {
             return out;
         }
-        auto* st = new storage();
-        st->bytes = new std::byte[p_capacity];
-        st->capacity = p_capacity;
-        st->release = [](std::byte* p) { delete[] p; };
-        out.m_storage = st;
+        // Owned by out before the bytes are allocated, so a throwing
+        // new[] does not leak the storage.
+        out.m_storage = new storage();
+        out.m_storage->bytes = new std::byte[p_capacity];
+        out.m_storage->capacity = p_capacity;
+        out.m_storage->release = [](std::byte* p) { delete[] p; };
         return out;
     }
 
