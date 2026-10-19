@@ -1,11 +1,13 @@
 #ifndef __BFC_EVENT_QUEUE_HPP__
 #define __BFC_EVENT_QUEUE_HPP__
 
+#include <cstdint>
 #include <condition_variable>
 #include <mutex>
 #include <vector>
 
 #include <bfc/function.hpp>
+#include <bfc/object_registry.hpp>
 
 namespace bfc
 {
@@ -124,6 +126,14 @@ private:
     std::condition_variable cv;
     std::vector<T> m_queue;
 };
+
+template <typename element_t = uint64_t>
+using cv_reactor_event_queue_tag =
+    object_tag<reactive_event_queue<element_t, light_function<void()>>>;
+
+template <typename element_t = uint64_t>
+using cv_reactor_event_queue_registry =
+    object_registry<cv_reactor_event_queue_tag<element_t>>;
 
 } // namespace bfc
 
