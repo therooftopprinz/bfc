@@ -20,6 +20,8 @@
 #include <bfc/poll_reactor.hpp>
 #endif
 
+#include <bfc/object_registry.hpp>
+
 namespace bfc
 {
 
@@ -30,6 +32,9 @@ using default_reactor = epoll_reactor<cb_t>;
 template <typename cb_t = light_function<void()>>
 using default_reactor = poll_reactor<cb_t>;
 #endif
+
+using default_reactor_tag = object_tag<default_reactor<>>;
+using default_reactor_registry = object_registry<default_reactor_tag>;
 
 } // namespace bfc
 

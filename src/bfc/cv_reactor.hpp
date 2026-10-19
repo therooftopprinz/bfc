@@ -194,6 +194,9 @@ public:
     std::thread::id m_reactor_thread_id{};
 };
 
+using cv_reactor_tag = object_tag<cv_reactor<>>;
+using cv_reactor_registry = object_registry<cv_reactor_tag>;
+
 } // namespace bfc
 
 #endif // __BFC_CV_REACTOR_HPP__
