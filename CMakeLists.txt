@@ -62,8 +62,7 @@ FILE(GLOB bfc_tests_SRC
 list(APPEND bfc_tests_SRC
     tests/ut/simple_shared_buffer_view_tests.cpp
     tests/ut/sized_buffer_tests.cpp
-    tests/ut/metric_tests.cpp
-    tests/ut/bidirectional_queue_registry_tests.cpp)
+    tests/ut/metric_tests.cpp)
 list(REMOVE_DUPLICATES bfc_tests_SRC)
 
 add_executable(bfc_tests ${bfc_tests_SRC} gtest/gmock-gtest-all.cc)
