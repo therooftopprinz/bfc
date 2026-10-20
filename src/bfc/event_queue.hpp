@@ -2,8 +2,11 @@
 #define __BFC_EVENT_QUEUE_HPP__
 
 #include <cstdint>
+#include <algorithm>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include <bfc/function.hpp>
@@ -79,6 +82,132 @@ private:
     callback_t m_cb = nullptr;
 };
 
+// Fixed-capacity FIFO ring; when full, push drops the oldest element.
+// Slots use std::optional so T need not be default-constructible.
+template <typename T, typename callback_t = light_function<void()>>
+class reactive_circular_lossy_queue
+    : public reactive_event_queue_base<callback_t>
+{
+public:
+    reactive_circular_lossy_queue() = default;
+    ~reactive_circular_lossy_queue() = default;
+
+    void set_capacity(size_t capacity)
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        if (capacity == m_capacity)
+        {
+            return;
+        }
+
+        std::vector<T> kept;
+        if (m_capacity != 0 && m_count != 0)
+        {
+            const size_t keep = std::min(m_count, capacity);
+            const size_t drop = m_count - keep;
+            size_t idx = (m_head + drop) % m_capacity;
+            kept.reserve(keep);
+            for (size_t i = 0; i < keep; ++i)
+            {
+                kept.push_back(std::move(*m_slots[idx]));
+                m_slots[idx].reset();
+                idx = (idx + 1) % m_capacity;
+            }
+        }
+
+        std::vector<std::optional<T>> new_slots(capacity);
+        const size_t new_count = kept.size();
+        for (size_t i = 0; i < new_count; ++i)
+        {
+            new_slots[i] = std::move(kept[i]);
+        }
+
+        m_slots = std::move(new_slots);
+        m_capacity = capacity;
+        m_head = 0;
+        m_count = new_count;
+    }
+
+    // Rvalue only. Returns occupancy after the push (0 when capacity is 0).
+    size_t push(T&& u)
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        if (m_capacity == 0)
+        {
+            return 0;
+        }
+
+        if (m_count < m_capacity)
+        {
+            const size_t tail = (m_head + m_count) % m_capacity;
+            m_slots[tail] = std::move(u);
+            ++m_count;
+            return m_count;
+        }
+
+        m_slots[m_head] = std::move(u);
+        m_head = (m_head + 1) % m_capacity;
+        return m_count;
+    }
+
+    bool pop(T& out)
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        if (m_count == 0)
+        {
+            return false;
+        }
+
+        out = std::move(*m_slots[m_head]);
+        m_slots[m_head].reset();
+        m_head = (m_head + 1) % m_capacity;
+        --m_count;
+        return true;
+    }
+
+    size_t size()
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        return m_count;
+    }
+
+    size_t capacity()
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        return m_capacity;
+    }
+
+    void set_callback(callback_t cb) override
+    {
+        std::unique_lock<std::mutex> lg(cb_mtx);
+        m_cb = std::move(cb);
+    }
+
+    bool has_data() override
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        return m_count != 0;
+    }
+
+    void notify_callback() override
+    {
+        std::unique_lock<std::mutex> lg(cb_mtx);
+        if (m_cb)
+        {
+            m_cb();
+        }
+    }
+
+private:
+    std::mutex m_queue_mtx;
+    std::mutex cb_mtx;
+    callback_t m_cb = nullptr;
+    size_t m_capacity = 0;
+    size_t m_head = 0;
+    size_t m_count = 0;
+    std::vector<std::optional<T>> m_slots;
+};
+
 template <typename T>
 class event_queue
 {
@@ -134,6 +263,14 @@ using cv_reactor_event_queue_tag =
 template <typename element_t = uint64_t>
 using cv_reactor_event_queue_registry =
     object_registry<cv_reactor_event_queue_tag<element_t>>;
+
+template <typename element_t = uint64_t>
+using cv_reactor_circular_lossy_queue_tag =
+    object_tag<reactive_circular_lossy_queue<element_t, light_function<void()>>>;
+
+template <typename element_t = uint64_t>
+using cv_reactor_circular_lossy_queue_registry =
+    object_registry<cv_reactor_circular_lossy_queue_tag<element_t>>;
 
 } // namespace bfc
 
