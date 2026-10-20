@@ -1,9 +1,13 @@
 #ifndef __BFC_EVENT_QUEUE_HPP__
 #define __BFC_EVENT_QUEUE_HPP__
 
-#include <cstdint>
+#include <algorithm>
 #include <condition_variable>
+#include <cstdint>
 #include <mutex>
+#include <optional>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <bfc/function.hpp>
@@ -79,6 +83,158 @@ private:
     callback_t m_cb = nullptr;
 };
 
+// Fixed-capacity FIFO ring. push drops the oldest element when the ring is full.
+// T must be nothrow-move-constructible. It need not be default-constructible
+// or move-assignable. Slots hold std::optional<T> so an empty slot has no T.
+// cv_reactor invokes the read callback once per wake. That callback has to
+// drain via pop(); elements left in the ring wait for a later wake.
+// Destructors of dropped and retired elements run after the queue mutex is
+// released.
+template <typename T, typename callback_t = light_function<void()>>
+class reactive_circular_lossy_queue
+    : public reactive_event_queue_base<callback_t>
+{
+public:
+    static_assert(std::is_nothrow_move_constructible<T>::value,
+        "reactive_circular_lossy_queue requires nothrow move construction");
+
+    reactive_circular_lossy_queue() = default;
+    ~reactive_circular_lossy_queue() = default;
+
+    // Keeps the newest min(size, capacity) elements, in order. Allocation
+    // happens before any slot is moved, so a failed allocation leaves the
+    // ring unchanged.
+    void set_capacity(size_t capacity)
+    {
+        std::vector<std::optional<T>> retired;
+        {
+            std::unique_lock<std::mutex> lg(m_queue_mtx);
+            if (capacity == m_capacity)
+            {
+                return;
+            }
+
+            std::vector<std::optional<T>> new_slots(capacity);
+            const size_t keep = (m_capacity == 0) ? 0 : std::min(m_count, capacity);
+            if (keep != 0)
+            {
+                const size_t drop = m_count - keep;
+                size_t idx = (m_head + drop) % m_capacity;
+                for (size_t i = 0; i < keep; ++i)
+                {
+                    new_slots[i].emplace(std::move(*m_slots[idx]));
+                    idx = (idx + 1) % m_capacity;
+                }
+            }
+
+            retired.swap(m_slots);
+            m_slots.swap(new_slots);
+            m_capacity = capacity;
+            m_head = 0;
+            m_count = keep;
+        }
+    }
+
+    // Rvalue only. Takes ownership of u, including when capacity is 0.
+    // Returns the occupancy before this call. A non-zero capacity and a
+    // return value equal to that capacity means this call dropped the oldest
+    // element.
+    size_t push(T&& u)
+    {
+        std::optional<T> dropped;
+        size_t size_before = 0;
+        {
+            std::unique_lock<std::mutex> lg(m_queue_mtx);
+            size_before = m_count;
+            if (m_capacity == 0)
+            {
+                dropped.emplace(std::move(u));
+            }
+            else if (m_count < m_capacity)
+            {
+                const size_t tail = (m_head + m_count) % m_capacity;
+                m_slots[tail].emplace(std::move(u));
+                ++m_count;
+            }
+            else
+            {
+                dropped.emplace(std::move(*m_slots[m_head]));
+                m_slots[m_head].emplace(std::move(u));
+                m_head = (m_head + 1) % m_capacity;
+            }
+        }
+        return size_before;
+    }
+
+    // nullopt when empty. ~T of the removed element runs after the queue
+    // mutex is released.
+    std::optional<T> pop()
+    {
+        std::optional<T> out;
+        {
+            std::unique_lock<std::mutex> lg(m_queue_mtx);
+            if (m_count == 0)
+            {
+                return std::nullopt;
+            }
+
+            out.emplace(std::move(*m_slots[m_head]));
+            m_slots[m_head].reset();
+            m_head = (m_head + 1) % m_capacity;
+            --m_count;
+        }
+        return out;
+    }
+
+    size_t size()
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        return m_count;
+    }
+
+    size_t capacity()
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        return m_capacity;
+    }
+
+    void set_callback(callback_t cb) override
+    {
+        std::unique_lock<std::mutex> lg(cb_mtx);
+        m_cb = std::move(cb);
+    }
+
+    bool has_data() override
+    {
+        std::unique_lock<std::mutex> lg(m_queue_mtx);
+        return m_count != 0;
+    }
+
+    // Copies the callback and invokes it without cb_mtx held, so the handler
+    // may call set_callback.
+    void notify_callback() override
+    {
+        callback_t cb;
+        {
+            std::unique_lock<std::mutex> lg(cb_mtx);
+            cb = m_cb;
+        }
+        if (cb)
+        {
+            cb();
+        }
+    }
+
+private:
+    std::mutex m_queue_mtx;
+    std::mutex cb_mtx;
+    callback_t m_cb = nullptr;
+    size_t m_capacity = 0;
+    size_t m_head = 0;
+    size_t m_count = 0;
+    std::vector<std::optional<T>> m_slots;
+};
+
 template <typename T>
 class event_queue
 {
@@ -134,6 +290,14 @@ using cv_reactor_event_queue_tag =
 template <typename element_t = uint64_t>
 using cv_reactor_event_queue_registry =
     object_registry<cv_reactor_event_queue_tag<element_t>>;
+
+template <typename element_t = uint64_t>
+using cv_reactor_circular_lossy_queue_tag =
+    object_tag<reactive_circular_lossy_queue<element_t, light_function<void()>>>;
+
+template <typename element_t = uint64_t>
+using cv_reactor_circular_lossy_queue_registry =
+    object_registry<cv_reactor_circular_lossy_queue_tag<element_t>>;
 
 } // namespace bfc
 
