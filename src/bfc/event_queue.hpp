@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <memory>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -26,6 +27,57 @@ public:
     virtual void set_callback(callback_t cb) = 0;
     virtual bool has_data() = 0;
     virtual void notify_callback() = 0;
+
+    // Retains the reactor without making the queue type depend on its type.
+    // Binding is independent of read callback registration. An in-flight push
+    // may still notify the previous reactor after replacement or clearing.
+    template <typename reactor_t>
+    void set_reactor(std::shared_ptr<reactor_t> reactor)
+    {
+        light_function<void()> wake_callback;
+        if (reactor)
+        {
+            wake_callback = [reactor = std::move(reactor)]() {
+                reactor->wake_up();
+            };
+        }
+        replace_wake_callback(std::move(wake_callback));
+    }
+
+    void set_reactor(std::nullptr_t)
+    {
+        replace_wake_callback(nullptr);
+    }
+
+protected:
+    // Copy under the binding mutex, then invoke with no queue locks held.
+    // The copy retains the reactor until this notification completes.
+    void notify_push()
+    {
+        auto wake_callback = [this]() {
+            std::unique_lock<std::mutex> lock(m_reactor_mtx);
+            return m_wake_callback;
+        }();
+        if (wake_callback)
+        {
+            wake_callback();
+        }
+    }
+
+private:
+    void replace_wake_callback(light_function<void()> wake_callback)
+    {
+        light_function<void()> retired;
+        {
+            std::unique_lock<std::mutex> lock(m_reactor_mtx);
+            retired = std::move(m_wake_callback);
+            m_wake_callback = std::move(wake_callback);
+        }
+        // Release the previous reactor outside the binding mutex.
+    }
+
+    std::mutex m_reactor_mtx;
+    light_function<void()> m_wake_callback;
 };
 
 template <typename T, typename callback_t>
@@ -38,9 +90,14 @@ public:
     template <typename U>
     size_t push(U&& u)
     {
-        std::unique_lock<std::mutex> lg(m_queue_mtx);
-        m_queue.emplace_back(std::forward<U>(u));
-        return m_queue.size();
+        size_t size_after;
+        {
+            std::unique_lock<std::mutex> lg(m_queue_mtx);
+            m_queue.emplace_back(std::forward<U>(u));
+            size_after = m_queue.size();
+        }
+        this->notify_push();
+        return size_after;
     }
 
     std::vector<T> pop()
@@ -88,6 +145,8 @@ private:
 // or move-assignable. Slots hold std::optional<T> so an empty slot has no T.
 // cv_reactor invokes the read callback once per wake. That callback has to
 // drain via pop(); elements left in the ring wait for a later wake.
+// With set_reactor(), every enqueue (including overwrite) signals the reactor.
+// Capacity-zero pushes discard the item and do not signal.
 // Destructors of dropped and retired elements run after the queue mutex is
 // released.
 template <typename T, typename callback_t = light_function<void()>>
@@ -143,6 +202,7 @@ public:
     {
         std::optional<T> dropped;
         size_t size_before = 0;
+        bool enqueued = false;
         {
             std::unique_lock<std::mutex> lg(m_queue_mtx);
             size_before = m_count;
@@ -152,16 +212,22 @@ public:
             }
             else if (m_count < m_capacity)
             {
+                enqueued = true;
                 const size_t tail = (m_head + m_count) % m_capacity;
                 m_slots[tail].emplace(std::move(u));
                 ++m_count;
             }
             else
             {
+                enqueued = true;
                 dropped.emplace(std::move(*m_slots[m_head]));
                 m_slots[m_head].emplace(std::move(u));
                 m_head = (m_head + 1) % m_capacity;
             }
+        }
+        if (enqueued)
+        {
+            this->notify_push();
         }
         return size_before;
     }

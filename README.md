@@ -28,6 +28,44 @@ The library is exposed through headers in `src/bfc` and currently includes:
 - FD registration and interest management APIs (`add_*`, `rem_*`, `req_*`) must be called from the same thread that runs `run()`.
 - Cross-thread signaling is supported via `wake_up(...)` and `stop()`.
 
+## Reactive queue wakeups
+
+Both `reactive_event_queue` and `reactive_circular_lossy_queue` can wake a
+reactor automatically after each enqueue:
+
+```cpp
+auto reactor = std::make_shared<bfc::cv_reactor<>>();
+bfc::reactive_circular_lossy_queue<int> queue;
+queue.set_capacity(64);
+queue.set_reactor(reactor);
+reactor->add_read_rdy(queue, [&queue] {
+    while (auto item = queue.pop()) {
+        // Process *item on the reactor thread.
+    }
+});
+queue.push(42); // Wakes reactor; run() dispatches the registered handler.
+```
+
+`set_reactor(std::shared_ptr<T>)` needs only `T::wake_up()`; the queue's type does
+not depend on `T`. The binding retains shared ownership of the reactor.
+`set_reactor(nullptr)` or an empty shared pointer clears the binding. Binding,
+replacement, and clearing are synchronized with pushes; a push already in
+flight may still wake the previous reactor safely. Notification runs after the
+queue mutex is released. A capacity-zero lossy queue does not enqueue or wake.
+
+Binding and read callback registration are separate. Register one consumer
+reactor per queue and bind that same reactor. Registration does not notify for
+existing items: explicitly wake after registering a queue that already contains
+data. Unbound queues retain the explicit `wake_up()` behavior. Handlers must
+drain their queues because reactor wakeups can coalesce.
+
+Clearing the binding does not unregister the read callback or wait for an
+in-flight callback. Before destroying a registered queue or callback state,
+remove the read registration and synchronize with the reactor thread (or stop
+and join it). Keep the queue alive until dispatch has finished. Avoid having
+a reactor-owned handler retain shared ownership of its bound queue, which
+would create an ownership cycle through the queue's reactor binding.
+
 ## Build tests
 
 ```bash
