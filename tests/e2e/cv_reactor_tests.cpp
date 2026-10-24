@@ -213,6 +213,41 @@ TEST(cv_reactor, is_reactor_thread)
     EXPECT_FALSE(reactor.is_reactor_thread());
 }
 
+// Teardown guards ask is_reactor_thread() from other threads while run()
+// starts and exits; the thread id must be safe to read concurrently (TSan).
+TEST(cv_reactor, is_reactor_thread_concurrent_with_run)
+{
+    cv_reactor<r_cb_t> reactor;
+    std::atomic<bool> polling{true};
+    std::atomic<bool> other_saw_true{false};
+
+    std::thread other([&](){
+        while (polling.load(std::memory_order_acquire))
+        {
+            if (reactor.is_reactor_thread())
+            {
+                other_saw_true.store(true, std::memory_order_relaxed);
+            }
+        }
+    });
+
+    for (int i = 0; i < 20; i++)
+    {
+        std::thread reactor_thread([&](){
+            reactor.run();
+        });
+        reactor.wake_up([&](){
+            reactor.stop();
+        });
+        reactor_thread.join();
+    }
+    polling.store(false, std::memory_order_release);
+    other.join();
+
+    EXPECT_FALSE(other_saw_true.load());
+    EXPECT_FALSE(reactor.is_reactor_thread());
+}
+
 TEST(cv_reactor, wake_up_cb_runs_on_reactor_thread)
 {
     cv_reactor<r_cb_t> reactor;

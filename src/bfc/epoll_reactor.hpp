@@ -225,8 +225,9 @@ struct epoll_reactor
 
     bool is_reactor_thread() const
     {
-        return m_reactor_thread_id != std::thread::id{} &&
-               std::this_thread::get_id() == m_reactor_thread_id;
+        // Written by run() on the reactor thread, read from any thread.
+        const std::thread::id id = m_reactor_thread_id.load();
+        return id != std::thread::id{} && id == std::this_thread::get_id();
     }
 
     void run()
@@ -312,7 +313,7 @@ struct epoll_reactor
 
             m_timer.schedule(timer_t::current_time_us());
         } // while (m_running)
-        m_reactor_thread_id = {};
+        m_reactor_thread_id = std::thread::id{};
     }
 
     void stop()
@@ -364,7 +365,7 @@ private:
     int m_epoll_fd;
     int m_event_fd;
     std::atomic<bool> m_running;
-    std::thread::id m_reactor_thread_id{};
+    std::atomic<std::thread::id> m_reactor_thread_id{};
 
     fd_ctx_s m_event_fd_ctx;
 
