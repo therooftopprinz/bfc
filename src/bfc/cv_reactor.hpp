@@ -124,13 +124,12 @@ public:
                     m_wakeup_req = false;
                     lg.unlock();
 
-                    std::list<context*> ctxs;
                     {
                         std::unique_lock<std::mutex> ctx_lg(m_ctx_mtx);
-                        ctxs = m_contexts;
+                        m_ctx_snapshot.assign(m_contexts.begin(), m_contexts.end());
                     }
 
-                    for (auto* ctx : ctxs)
+                    for (auto* ctx : m_ctx_snapshot)
                     {
                         if (!ctx || !ctx->has_data())
                         {
@@ -187,6 +186,8 @@ public:
 
     std::mutex m_ctx_mtx;
     std::list<context*> m_contexts;
+    // run()'s per-wake copy of m_contexts; reused so a wake does not allocate.
+    std::vector<context*> m_ctx_snapshot;
 
     std::mutex m_wake_up_cb_mtx;
     std::vector<cb_t> m_wake_up_cb;
