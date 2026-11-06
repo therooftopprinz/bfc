@@ -711,7 +711,10 @@ private:
     // Removals asked for from another thread run on the reactor thread. They
     // are queued here so that the callback posted for them captures only
     // `this`: a callback capturing the caller's done_cb (itself a cb_t) is
-    // always larger than a fixed-size cb_t's storage, whatever its size.
+    // always larger than a fixed-size cb_t's storage, whatever its size. The
+    // first posted callback takes every removal queued so far (in request
+    // order), so a removal may run before wake_up callbacks posted ahead of
+    // it: earlier than it was asked, never later.
     struct pending_removal_s
     {
         fd_t fd;

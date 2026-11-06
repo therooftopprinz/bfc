@@ -19,7 +19,9 @@ namespace bfc
 // rest is handled after the other ready work.
 //
 // The reactor keeps cb itself (the queue's own callback slot is left alone),
-// so the queue's callback type need not match the reactor's.
+// so the queue's callback type need not match the reactor's. It holds the
+// queue by reference: a queue must stay alive until it is removed
+// (rem_read_rdy) or the reactor is gone.
 template <typename cb_t>
 class reactor_queues
 {

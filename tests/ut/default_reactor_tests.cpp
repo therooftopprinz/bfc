@@ -4,21 +4,11 @@
 #include <atomic>
 #include <memory>
 #include <thread>
-#include <type_traits>
 
-// The default reactor's callbacks are large_functions: room for an owner
-// (shared_ptr), another shared_ptr and scalars, which light_function lacks.
-TEST(default_reactor, callback_is_large_function)
-{
-    using cb_t = bfc::large_function<void()>;
-    auto owner = std::make_shared<int>(7);
-    auto other = std::make_shared<int>(8);
-    uint64_t a = 1, b = 2;
-    int fd = 3;
-    cb_t cb([owner, other, a, b, fd]() { (void)owner; (void)other; (void)a; (void)b; (void)fd; });
-    EXPECT_TRUE(bool(cb));
-}
-
+// The default reactor's callbacks are large_functions: this capture (two
+// shared_ptrs and a uint64_t, 40 bytes on a 64-bit host) does not fit a
+// light_function's 24, so the test stops compiling ("storage too small") if
+// the default goes back to one.
 TEST(default_reactor, registry_and_wake_up_with_large_capture)
 {
     auto reactor = std::make_shared<bfc::default_reactor<>>();
