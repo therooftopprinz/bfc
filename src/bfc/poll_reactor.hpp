@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #include <limits>
 #include <mutex>
@@ -17,6 +18,7 @@
 #include <fcntl.h>
 
 #include <bfc/function.hpp>
+#include <bfc/reactor_queues.hpp>
 #include <bfc/timer.hpp>
 
 namespace bfc
@@ -279,6 +281,12 @@ struct poll_reactor
                 }
             }
 
+            // A queue left with data last pass: do not block.
+            if (m_queue_backlog)
+            {
+                timeout_ms = 0;
+            }
+
             // poll mutates revents, so build a temporary list each iteration.
             // Callbacks may remove entries (which reorders m_poll_entries), so
             // dispatch from a snapshot.
@@ -359,6 +367,8 @@ struct poll_reactor
                 }
             }
 
+            m_queue_backlog = m_queues.notify();
+
             for (auto fd : m_pending_cleanup)
             {
                 auto it = m_fd_entries.find(fd);
@@ -385,6 +395,20 @@ struct poll_reactor
     {
         m_running = false;
         wake_up();
+    }
+
+    // See reactor_queues.hpp.
+    template <typename queue_t>
+    void add_queue(queue_t& queue, cb_t cb)
+    {
+        m_queues.add(queue, std::move(cb));
+        wake_up();  // data queued before the registration
+    }
+
+    template <typename queue_t>
+    void rem_queue(queue_t& queue)
+    {
+        m_queues.rem(queue);
     }
 
     void wake_up(cb_t cb = nullptr)
@@ -527,6 +551,8 @@ private:
     std::vector<poll_entry_s> m_poll_entries;
 
     std::mutex m_wake_up_cb_mtx;
+    reactor_queues<cb_t> m_queues;
+    bool m_queue_backlog = false;  // reactor thread only
     std::vector<cb_t> m_wake_up_cb;
 
     int m_wake_pipe[2]{-1, -1};
@@ -582,6 +608,23 @@ public:
         return m_reactor.add_read(fd, read_events, std::move(cb));
     }
 
+    // A reactive queue (e.g. bfc::reactive_circular_lossy_queue): cb runs on
+    // the reactor thread while it has data. Bind the queue too, so a push
+    // wakes this reactor: queue.set_reactor(<shared_ptr to this reactor>).
+    template <typename queue_t, std::enable_if_t<!std::is_integral_v<queue_t>>* = nullptr>
+    bool add_read_rdy(queue_t& queue, cb_t cb)
+    {
+        m_reactor.add_queue(queue, std::move(cb));
+        return true;
+    }
+
+    template <typename queue_t, std::enable_if_t<!std::is_integral_v<queue_t>>* = nullptr>
+    bool rem_read_rdy(queue_t& queue)
+    {
+        m_reactor.rem_queue(queue);
+        return true;
+    }
+
     // On the reactor thread the fd leaves the poll set right away, so the
     // caller may close it next: poll() on a closed fd fails with EBADF on some
     // platforms (lwIP) instead of reporting POLLNVAL. done_cb still runs later
@@ -632,7 +675,7 @@ public:
         return m_reactor.req_write(fd, POLLOUT);
     }
 
-    void wake_up(cb_t cb)
+    void wake_up(cb_t cb = nullptr)
     {
         m_reactor.wake_up(std::move(cb));
     }

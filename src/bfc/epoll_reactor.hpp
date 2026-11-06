@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #include <limits>
 #include <deque>
@@ -20,6 +21,7 @@
 #include <unistd.h>
 
 #include <bfc/function.hpp>
+#include <bfc/reactor_queues.hpp>
 #include <bfc/timer.hpp>
 
 // epoll_pwait2 (Linux 5.11+) gives microsecond timer precision; without it
@@ -252,6 +254,13 @@ struct epoll_reactor
                 timeout_ptr = &timeout;
             }
 
+            // A queue left with data last pass: do not block.
+            if (m_queue_backlog)
+            {
+                timeout = timespec{};
+                timeout_ptr = &timeout;
+            }
+
             auto nfds = wait(timeout_ptr);
             if (-1 == nfds)
             {
@@ -294,6 +303,8 @@ struct epoll_reactor
                 }
             }
 
+            m_queue_backlog = m_queues.notify();
+
             // Clean up any entries that no longer have active interests
             for (auto fd : m_pending_cleanup)
             {
@@ -320,6 +331,20 @@ struct epoll_reactor
     {
         m_running = false;
         wake_up();
+    }
+
+    // See reactor_queues.hpp.
+    template <typename queue_t>
+    void add_queue(queue_t& queue, cb_t cb)
+    {
+        m_queues.add(queue, std::move(cb));
+        wake_up();  // data queued before the registration
+    }
+
+    template <typename queue_t>
+    void rem_queue(queue_t& queue)
+    {
+        m_queues.rem(queue);
     }
 
     void wake_up(cb_t cb = nullptr)
@@ -360,6 +385,8 @@ private:
     std::vector<epoll_event> m_event_cache;
 
     std::mutex m_wake_up_cb_mtx;
+    reactor_queues<cb_t> m_queues;
+    bool m_queue_backlog = false;  // reactor thread only
     std::vector<cb_t> m_wake_up_cb;
 
     int m_epoll_fd;
@@ -406,6 +433,21 @@ public:
     bool add_read_rdy(fd_t fd, cb_t cb)
     {
         return m_reactor.add_read(fd, EPOLLIN|EPOLLRDHUP, std::move(cb));
+    }
+
+    // A reactive queue: see poll_reactor::add_read_rdy(queue_t&, cb_t).
+    template <typename queue_t, std::enable_if_t<!std::is_integral_v<queue_t>>* = nullptr>
+    bool add_read_rdy(queue_t& queue, cb_t cb)
+    {
+        m_reactor.add_queue(queue, std::move(cb));
+        return true;
+    }
+
+    template <typename queue_t, std::enable_if_t<!std::is_integral_v<queue_t>>* = nullptr>
+    bool rem_read_rdy(queue_t& queue)
+    {
+        m_reactor.rem_queue(queue);
+        return true;
     }
 
     bool rem_read_rdy(fd_t fd, cb_t done_cb = nullptr)
@@ -457,7 +499,7 @@ public:
         return m_reactor.req_write(fd, EPOLLOUT|EPOLLONESHOT);
     }
 
-    void wake_up(cb_t cb)
+    void wake_up(cb_t cb = nullptr)
     {
         m_reactor.wake_up(std::move(cb));
     }
