@@ -3,7 +3,9 @@
 #include <bfc/socket.hpp>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <thread>
+#include <vector>
 #include <netinet/tcp.h>
 
 using namespace bfc;
@@ -646,4 +648,69 @@ TEST(poll_reactor, fd_number_reused_in_same_iteration)
     reactor_thread.join();
     ::close(fd_b.load());
     EXPECT_TRUE(got);
+}
+
+// A fixed-size callback type: removals from another thread used to post a
+// callback capturing done_cb (itself a cb_t), which cannot fit a cb_t of any
+// fixed size, so these did not compile.
+using light_reactor_t = bfc::poll_reactor<bfc::light_function<void()>>;
+
+TEST(poll_reactor, light_function_rem_from_other_thread_runs_done_cb)
+{
+    light_reactor_t reactor;
+    bfc::socket client(create_tcp4());
+    bfc::socket server;
+    connect_tcp_pair(server, client);
+
+    std::atomic<int> done{0};
+    std::thread reactor_thread([&]() { reactor.run(); });
+
+    ASSERT_TRUE(reactor.add_read_rdy(server.fd(), []() {}));
+    ASSERT_TRUE(reactor.add_write_rdy(client.fd(), []() {}));
+    std::atomic<int>* d = &done;
+    ASSERT_TRUE(reactor.rem_read_rdy(server.fd(), [d]() { d->fetch_add(1); }));
+    ASSERT_TRUE(reactor.rem_write_rdy(client.fd(), [d]() { d->fetch_add(10); }));
+
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (done.load() != 11 && std::chrono::steady_clock::now() < until)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    reactor.stop();
+    reactor_thread.join();
+    EXPECT_EQ(done.load(), 11);
+}
+
+TEST(poll_reactor, deferred_removals_run_in_request_order)
+{
+    light_reactor_t reactor;
+    bfc::socket c1(create_tcp4());
+    bfc::socket s1;
+    connect_tcp_pair(s1, c1);
+    bfc::socket c2(create_tcp4());
+    bfc::socket s2;
+    connect_tcp_pair(s2, c2);
+
+    std::mutex mu;
+    std::vector<int> order;
+    std::atomic<int> done{0};
+    std::thread reactor_thread([&]() { reactor.run(); });
+    ASSERT_TRUE(reactor.add_read_rdy(s1.fd(), []() {}));
+    ASSERT_TRUE(reactor.add_read_rdy(s2.fd(), []() {}));
+    auto* o = &order;
+    auto* m = &mu;
+    auto* d = &done;
+    ASSERT_TRUE(reactor.rem_read_rdy(s1.fd(), [o, m, d]() { std::lock_guard<std::mutex> l(*m); o->push_back(1); d->fetch_add(1); }));
+    ASSERT_TRUE(reactor.rem_read_rdy(s2.fd(), [o, m, d]() { std::lock_guard<std::mutex> l(*m); o->push_back(2); d->fetch_add(1); }));
+
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (done.load() != 2 && std::chrono::steady_clock::now() < until)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    reactor.stop();
+    reactor_thread.join();
+    ASSERT_EQ(order.size(), 2u);
+    EXPECT_EQ(order[0], 1);
+    EXPECT_EQ(order[1], 2);
 }

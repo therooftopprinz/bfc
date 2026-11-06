@@ -25,11 +25,14 @@
 namespace bfc
 {
 
+// Callbacks are large_functions by default: applications register callbacks
+// that hold their owner (shared_ptr) and more, which light_function's 24
+// bytes rarely fit.
 #if defined(BFC_DEFAULT_REACTOR_EPOLL)
-template <typename cb_t = light_function<void()>>
+template <typename cb_t = large_function<void()>>
 using default_reactor = epoll_reactor<cb_t>;
 #else
-template <typename cb_t = light_function<void()>>
+template <typename cb_t = large_function<void()>>
 using default_reactor = poll_reactor<cb_t>;
 #endif
 
