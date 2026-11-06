@@ -660,3 +660,28 @@ TEST(epoll_reactor, minimum_timer_step)
     static_assert(reactor_t::minimum_timer_step() == 1000);
 #endif
 }
+
+// See poll_reactor_tests: a fixed-size callback type for removals from
+// another thread, which used to capture done_cb inside a cb_t.
+TEST(epoll_reactor, light_function_rem_from_other_thread_runs_done_cb)
+{
+    bfc::epoll_reactor<bfc::light_function<void()>> reactor;
+    bfc::socket client(create_tcp4());
+    bfc::socket server;
+    connect_tcp_pair(server, client);
+
+    std::atomic<int> done{0};
+    std::thread reactor_thread([&]() { reactor.run(); });
+    ASSERT_TRUE(reactor.add_read_rdy(server.fd(), []() {}));
+    std::atomic<int>* d = &done;
+    ASSERT_TRUE(reactor.rem_read_rdy(server.fd(), [d]() { d->fetch_add(1); }));
+
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (done.load() != 1 && std::chrono::steady_clock::now() < until)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    reactor.stop();
+    reactor_thread.join();
+    EXPECT_EQ(done.load(), 1);
+}

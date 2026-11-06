@@ -222,6 +222,10 @@ template <typename function_t>
 using light_function = typename function_type_helper<24, function_t>::type;
 template <typename function_t>
 using big_function = typename function_type_helper<32, function_t>::type;
+// Room for a few shared_ptrs and scalars, e.g. a reactor callback holding its
+// owner and a buffer.
+template <typename function_t>
+using large_function = typename function_type_helper<64, function_t>::type;
 
 } // namespace bfc
 

@@ -421,13 +421,7 @@ public:
             }
             return true;
         }
-        m_reactor.wake_up([this, fd, done_cb = std::move(done_cb)]() mutable {
-                m_reactor.rem_read(fd);
-                if (done_cb)
-                {
-                    done_cb();
-                }
-            });
+        defer_removal(fd, false, std::move(done_cb));
         return true;
     }
 
@@ -454,13 +448,7 @@ public:
             }
             return true;
         }
-        m_reactor.wake_up([this, fd, done_cb = std::move(done_cb)]() mutable {
-                m_reactor.rem_write(fd);
-                if (done_cb)
-                {
-                    done_cb();
-                }
-            });
+        defer_removal(fd, true, std::move(done_cb));
         return true;
     }
 
@@ -506,6 +494,53 @@ public:
     }
 
 private:
+    // Removals asked for from another thread run on the reactor thread. They
+    // are queued here so that the callback posted for them captures only
+    // `this`: a callback capturing the caller's done_cb (itself a cb_t) is
+    // always larger than a fixed-size cb_t's storage, whatever its size.
+    struct pending_removal_s
+    {
+        fd_t fd;
+        bool write;
+        cb_t done_cb;
+    };
+
+    void defer_removal(fd_t fd, bool write, cb_t done_cb)
+    {
+        {
+            std::unique_lock<std::mutex> lg(m_removals_mtx);
+            m_removals.push_back(pending_removal_s{fd, write, std::move(done_cb)});
+        }
+        m_reactor.wake_up([this]() { run_removals(); });
+    }
+
+    void run_removals()
+    {
+        std::vector<pending_removal_s> batch;
+        {
+            std::unique_lock<std::mutex> lg(m_removals_mtx);
+            batch.swap(m_removals);
+        }
+        for (auto& removal : batch)
+        {
+            if (removal.write)
+            {
+                m_reactor.rem_write(removal.fd);
+            }
+            else
+            {
+                m_reactor.rem_read(removal.fd);
+            }
+            if (removal.done_cb)
+            {
+                removal.done_cb();
+            }
+        }
+    }
+
+    std::mutex m_removals_mtx;
+    std::vector<pending_removal_s> m_removals;
+
     reactor_t m_reactor;
 };
 
