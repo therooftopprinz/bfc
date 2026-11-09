@@ -1,6 +1,10 @@
 #ifndef BFC_THREAD_POOL_HPP
 #define BFC_THREAD_POOL_HPP
 
+#include <bfc/allocation.hpp>
+
+#include <bfc/containers.hpp>
+
 #include <condition_variable>
 #include <cstddef>
 #include <memory>
@@ -13,7 +17,7 @@
 namespace bfc
 {
 
-template <typename function_t = light_function<void()>>
+template <typename function_t = config::function<void()>>
 class thread_pool
 {
 public:
@@ -24,7 +28,7 @@ public:
         for (auto i = 0u; i < p_max_size; i++)
         {
             m_free.emplace_back(i);
-            m_pool.emplace_back(std::make_unique<thread_entry>());
+            m_pool.emplace_back(bfc::make_unique<thread_entry>());
             auto& entry = *(m_pool.back());
             entry.functor = {};
 
@@ -105,9 +109,9 @@ private:
     };
 
     bool m_is_running = true;
-    std::vector<std::unique_ptr<thread_entry>> m_pool;
+    bfc::vector<bfc::unique_ptr<thread_entry>> m_pool;
     std::condition_variable m_worker_available_cv;
-    std::vector<size_t> m_free;
+    bfc::vector<size_t> m_free;
     mutable std::mutex m_free_mtx;
 };
 

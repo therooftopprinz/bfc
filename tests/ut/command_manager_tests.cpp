@@ -16,7 +16,7 @@ TEST(command_manager, ShouldFillArgs)
     int fd;
     std::string trigger;
     int size;
-    auto fn = [&](args_map&& pArgs) -> std::string
+    auto fn = [&](args_map&& pArgs) -> bfc::string
     {
         fd = *pArgs.as<int>("fd");
         trigger = *pArgs.as<std::string>("trigger");

@@ -112,6 +112,8 @@ target_include_directories(bfc_config INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/conf
 ```
 
 A missing config is a compile or configure error; there is no fallback. The
-config sets the callback types (`reactor_cb`, `queue_cb`, `timer_cb`), the
+config sets the one function template every callback uses (`function<Signature>`: `std::function` or a large enough fixed function), the
 default reactor (`BFC_CONFIG_REACTOR_POLL` or `_EPOLL`) and the allocator type
-(`allocator<T>`, e.g. an alias of `std::allocator`). `tests/config` is bfc's own.
+(`allocator<T>`, e.g. an alias of `std::allocator`). bfc's own tests run under three configs selected with `-DBFC_TEST_CONFIG`:
+`counting` (default, a counting custom allocator), `std` (`std::allocator`,
+`std::function`) and `bfc` (`std::allocator`, `bfc::large_function`).

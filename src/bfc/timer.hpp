@@ -1,6 +1,8 @@
 #ifndef __BFC_TIMER_HPP__
 #define __BFC_TIMER_HPP__
 
+#include <bfc/containers.hpp>
+
 #include <bfc/config.hpp>
 
 #include <map>
@@ -13,7 +15,7 @@
 namespace bfc
 {
 
-template <typename cb_t = config::timer_cb>
+template <typename cb_t = config::function<void()>>
 class timer
 {
 public:
@@ -63,8 +65,8 @@ public:
 
     void schedule(int64_t now_us = current_time_us())
     {
-        using node_type = typename std::map<timer_id_t, cb_t>::node_type;
-        std::list<node_type> extracted;
+        using node_type = typename bfc::map<timer_id_t, cb_t>::node_type;
+        bfc::list<node_type> extracted;
         {
             std::unique_lock lg(m_cb_map_mtx);
             auto it = m_cb_map.begin();
@@ -104,7 +106,7 @@ public:
 
 private:
     uint64_t m_timer_ctr = 0;
-    std::map<timer_id_t, cb_t> m_cb_map;
+    bfc::map<timer_id_t, cb_t> m_cb_map;
     mutable std::mutex m_cb_map_mtx;
 };
 

@@ -13,6 +13,7 @@
 #include <cstring>
 
 #include <bfc/buffer.hpp>
+#include <bfc/containers.hpp>
 
 namespace bfc
 {
@@ -38,7 +39,7 @@ inline sockaddr_in ip4_port_to_sockaddr(uint32_t ip, uint16_t port)
     return addr;
 }
 
-inline sockaddr_in ip4_port_to_sockaddr(std::string ip, uint16_t port)
+inline sockaddr_in ip4_port_to_sockaddr(const bfc::string& ip, uint16_t port)
 {
     sockaddr_in addr;
     memset((char *)&addr, 0, sizeof(addr));
@@ -49,7 +50,7 @@ inline sockaddr_in ip4_port_to_sockaddr(std::string ip, uint16_t port)
     return addr;
 }
 
-inline sockaddr_in6 ip6_port_to_sockaddr(std::string ip, uint16_t port)
+inline sockaddr_in6 ip6_port_to_sockaddr(const bfc::string& ip, uint16_t port)
 {
     sockaddr_in6 addr;
     memset((char *)&addr, 0, sizeof(addr));
@@ -60,7 +61,7 @@ inline sockaddr_in6 ip6_port_to_sockaddr(std::string ip, uint16_t port)
     return addr;
 }
 
-inline std::string sockaddr_to_string(sockaddr *addr)
+inline bfc::string sockaddr_to_string(sockaddr *addr)
 {
     char buffer[64];
     char out[72];
@@ -83,7 +84,7 @@ inline std::string sockaddr_to_string(sockaddr *addr)
     }
 
     snprintf(out, sizeof(out), "%s:%" PRIu16, buffer, port);
-    return out;
+    return bfc::string(out);
 }
 
 inline int create_tcp4()

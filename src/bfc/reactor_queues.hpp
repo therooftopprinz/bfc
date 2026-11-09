@@ -1,6 +1,8 @@
 #ifndef __BFC_REACTOR_QUEUES_HPP__
 #define __BFC_REACTOR_QUEUES_HPP__
 
+#include <bfc/containers.hpp>
+
 #include <algorithm>
 #include <mutex>
 #include <vector>
@@ -80,13 +82,13 @@ private:
     struct entry_s
     {
         const void* key;
-        light_function<bool()> has_data;
+        config::function<bool()> has_data;
         cb_t cb;
     };
 
     std::mutex m_mtx;
-    std::vector<entry_s> m_entries;
-    std::vector<entry_s> m_snapshot;  // reactor thread only
+    bfc::vector<entry_s> m_entries;
+    bfc::vector<entry_s> m_snapshot;  // reactor thread only
 };
 
 } // namespace bfc

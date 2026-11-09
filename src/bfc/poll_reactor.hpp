@@ -1,6 +1,8 @@
 #ifndef __BFC_POLL_REACTOR_HPP__
 #define __BFC_POLL_REACTOR_HPP__
 
+#include <bfc/containers.hpp>
+
 #include <bfc/config.hpp>
 
 #include <unordered_map>
@@ -29,7 +31,7 @@ namespace bfc
 namespace detail
 {
 
-template <typename cb_t = config::reactor_cb>
+template <typename cb_t = config::function<void()>>
 struct poll_reactor
 {
     enum class poll_kind : uint8_t
@@ -289,10 +291,12 @@ struct poll_reactor
                 timeout_ms = 0;
             }
 
-            // poll mutates revents, so build a temporary list each iteration.
+            // poll mutates revents, so rebuild the pollfd list each iteration in a
+            // reactor-thread member (no allocation once grown; not reentrant).
             // Callbacks may remove entries (which reorders m_poll_entries), so
             // dispatch from a snapshot.
-            std::vector<pollfd> poll_fds;
+            auto& poll_fds = m_poll_fds; // reused, so a pass does not allocate
+            poll_fds.clear();
             poll_fds.reserve(m_poll_entries.size());
             m_dispatch.assign(m_poll_entries.begin(), m_poll_entries.end());
             for (auto& entry : m_poll_entries)
@@ -550,12 +554,12 @@ private:
         }
     }
 
-    std::vector<poll_entry_s> m_poll_entries;
+    bfc::vector<poll_entry_s> m_poll_entries;
 
     std::mutex m_wake_up_cb_mtx;
     reactor_queues<cb_t> m_queues;
     bool m_queue_backlog = false;  // reactor thread only
-    std::vector<cb_t> m_wake_up_cb;
+    bfc::vector<cb_t> m_wake_up_cb;
 
     int m_wake_pipe[2]{-1, -1};
     cb_t m_wake_cb = nullptr;
@@ -563,11 +567,12 @@ private:
     std::atomic<bool> m_running;
     std::atomic<std::thread::id> m_reactor_thread_id{};
 
-    std::unordered_map<int, fd_entry_s> m_fd_entries;
-    std::vector<int> m_pending_cleanup;
-    std::vector<poll_entry_s> m_dispatch;
+    bfc::unordered_map<int, fd_entry_s> m_fd_entries;
+    bfc::vector<int> m_pending_cleanup;
+    bfc::vector<poll_entry_s> m_dispatch;
+    bfc::vector<pollfd> m_poll_fds; // reactor thread only
     uint64_t m_gen = 0;
-    std::vector<cb_t> m_retired_cbs;
+    bfc::vector<cb_t> m_retired_cbs;
 
     using timer_t = timer<cb_t>;
     timer_t m_timer;
@@ -575,7 +580,7 @@ private:
 
 } // namespace detail
 
-template <typename cb_t = config::reactor_cb>
+template <typename cb_t = config::function<void()>>
 class poll_reactor
 {
     using reactor_t = detail::poll_reactor<cb_t>;
@@ -595,9 +600,9 @@ public:
         return errno;
     }
 
-    std::string get_last_error()
+    bfc::string get_last_error()
     {
-        return strerror(errno);
+        return bfc::string(strerror(errno));
     }
 
     bool add_read_rdy(fd_t fd, cb_t cb)
@@ -735,7 +740,7 @@ private:
 
     void run_removals()
     {
-        std::vector<pending_removal_s> batch;
+        bfc::vector<pending_removal_s> batch;
         {
             std::unique_lock<std::mutex> lg(m_removals_mtx);
             batch.swap(m_removals);
@@ -758,7 +763,7 @@ private:
     }
 
     std::mutex m_removals_mtx;
-    std::vector<pending_removal_s> m_removals;
+    bfc::vector<pending_removal_s> m_removals;
 
     reactor_t m_reactor;
 };

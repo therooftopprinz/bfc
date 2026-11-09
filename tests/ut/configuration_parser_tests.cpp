@@ -69,7 +69,7 @@ TEST(configuration_parser, loadReturnsTrueAndParsesFile)
     out.close();
 
     configuration_parser parser;
-    EXPECT_TRUE(parser.load(path));
+    EXPECT_TRUE(parser.load(bfc::string(path.data(), path.size())));
     ASSERT_TRUE(parser.as<int>("a").has_value());
     EXPECT_EQ(1, parser.as<int>("a").value());
     ASSERT_TRUE(parser.as<int>("b").has_value());

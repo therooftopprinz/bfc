@@ -23,10 +23,10 @@ namespace bfc
 {
 
 #if defined(BFC_CONFIG_REACTOR_EPOLL)
-template <typename cb_t = config::reactor_cb>
+template <typename cb_t = config::function<void()>>
 using default_reactor = epoll_reactor<cb_t>;
 #else
-template <typename cb_t = config::reactor_cb>
+template <typename cb_t = config::function<void()>>
 using default_reactor = poll_reactor<cb_t>;
 #endif
 

@@ -23,9 +23,22 @@ target_include_directories(bfc INTERFACE
 # requires the parent's, so one config governs the whole build.
 if(NOT TARGET bfc_config)
     if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+        # BFC_TEST_CONFIG: counting (custom allocator type), std (std::allocator with
+        # std::function) or bfc (std::allocator with bfc function types only).
+        set(BFC_TEST_CONFIG "counting" CACHE STRING "bfc test config: counting, std or bfc")
+        if(NOT BFC_TEST_CONFIG MATCHES "^(counting|std|bfc)$")
+            message(FATAL_ERROR "BFC_TEST_CONFIG must be counting, std or bfc, not \"${BFC_TEST_CONFIG}\"")
+        endif()
+        if(BFC_TEST_CONFIG STREQUAL "bfc")
+            set(bfc_test_config_dir tests/config_bfc)
+        elseif(BFC_TEST_CONFIG STREQUAL "std")
+            set(bfc_test_config_dir tests/config_std)
+        else()
+            set(bfc_test_config_dir tests/config)
+        endif()
         add_library(bfc_config INTERFACE)
         target_include_directories(bfc_config INTERFACE
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/config)
+            ${CMAKE_CURRENT_SOURCE_DIR}/${bfc_test_config_dir})
     else()
         message(FATAL_ERROR
             "bfc needs a bfc_config target (an INTERFACE library whose include "
