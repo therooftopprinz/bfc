@@ -1,6 +1,8 @@
 #ifndef __BFC_POLL_REACTOR_HPP__
 #define __BFC_POLL_REACTOR_HPP__
 
+#include <bfc/config.hpp>
+
 #include <unordered_map>
 #include <stdexcept>
 #include <cstring>
@@ -27,7 +29,7 @@ namespace bfc
 namespace detail
 {
 
-template <typename cb_t = light_function<void()>>
+template <typename cb_t = config::reactor_cb>
 struct poll_reactor
 {
     enum class poll_kind : uint8_t
@@ -573,7 +575,7 @@ private:
 
 } // namespace detail
 
-template <typename cb_t = light_function<void()>>
+template <typename cb_t = config::reactor_cb>
 class poll_reactor
 {
     using reactor_t = detail::poll_reactor<cb_t>;

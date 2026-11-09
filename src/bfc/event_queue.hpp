@@ -1,6 +1,10 @@
 #ifndef __BFC_EVENT_QUEUE_HPP__
 #define __BFC_EVENT_QUEUE_HPP__
 
+#include <bfc/allocation.hpp>
+
+#include <bfc/config.hpp>
+
 #include <algorithm>
 #include <condition_variable>
 #include <cstdint>
@@ -80,7 +84,7 @@ private:
     light_function<void()> m_wake_callback;
 };
 
-template <typename T, typename callback_t>
+template <typename T, typename callback_t = config::queue_cb>
 class reactive_event_queue : public reactive_event_queue_base<callback_t>
 {
 public:
@@ -149,11 +153,13 @@ private:
 // Capacity-zero pushes discard the item and do not signal.
 // Destructors of dropped and retired elements run after the queue mutex is
 // released.
-template <typename T, typename callback_t = light_function<void()>>
+template <typename T, typename callback_t = config::queue_cb>
 class reactive_circular_lossy_queue
     : public reactive_event_queue_base<callback_t>
 {
 public:
+    using slots_t = std::vector<std::optional<T>, config::allocator<std::optional<T>>>;
+
     static_assert(std::is_nothrow_move_constructible<T>::value,
         "reactive_circular_lossy_queue requires nothrow move construction");
 
@@ -165,7 +171,7 @@ public:
     // ring unchanged.
     void set_capacity(size_t capacity)
     {
-        std::vector<std::optional<T>> retired;
+        slots_t retired;
         {
             std::unique_lock<std::mutex> lg(m_queue_mtx);
             if (capacity == m_capacity)
@@ -173,7 +179,7 @@ public:
                 return;
             }
 
-            std::vector<std::optional<T>> new_slots(capacity);
+            slots_t new_slots(capacity);
             const size_t keep = (m_capacity == 0) ? 0 : std::min(m_count, capacity);
             if (keep != 0)
             {
@@ -298,7 +304,7 @@ private:
     size_t m_capacity = 0;
     size_t m_head = 0;
     size_t m_count = 0;
-    std::vector<std::optional<T>> m_slots;
+    slots_t m_slots;
 };
 
 template <typename T>
@@ -351,7 +357,7 @@ private:
 
 template <typename element_t = uint64_t>
 using cv_reactor_event_queue_tag =
-    object_tag<reactive_event_queue<element_t, light_function<void()>>>;
+    object_tag<reactive_event_queue<element_t, config::queue_cb>>;
 
 template <typename element_t = uint64_t>
 using cv_reactor_event_queue_registry =
@@ -359,7 +365,7 @@ using cv_reactor_event_queue_registry =
 
 template <typename element_t = uint64_t>
 using cv_reactor_circular_lossy_queue_tag =
-    object_tag<reactive_circular_lossy_queue<element_t, light_function<void()>>>;
+    object_tag<reactive_circular_lossy_queue<element_t, config::queue_cb>>;
 
 template <typename element_t = uint64_t>
 using cv_reactor_circular_lossy_queue_registry =

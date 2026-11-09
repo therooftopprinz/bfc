@@ -16,7 +16,7 @@ struct wake_target
     void wake_up() { on_wake(); }
 };
 
-using vector_queue = bfc::reactive_event_queue<int, bfc::light_function<void()>>;
+using vector_queue = bfc::reactive_event_queue<int>;
 using lossy_queue = bfc::reactive_circular_lossy_queue<int>;
 
 void prepare(vector_queue&) {}

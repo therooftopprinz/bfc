@@ -1,6 +1,8 @@
 #ifndef __BFC_MEMORYPOOL_HPP__
 #define __BFC_MEMORYPOOL_HPP__
 
+#include <bfc/allocation.hpp>
+
 #include <mutex>
 #include <array>
 #include <cmath>
@@ -24,7 +26,7 @@ public:
     {
         for (auto i : m_allocations)
         {
-            operator delete[](i, std::align_val_t {ALIGNMENT});
+            aligned_bytes_deallocate<ALIGNMENT>(i, m_size);
         }
     }
 
@@ -56,8 +58,7 @@ private:
             return rv;
         }
         lg.unlock();
-        return static_cast<std::byte*>(
-            operator new[](m_size, std::align_val_t{ALIGNMENT}));
+        return aligned_bytes_allocate<ALIGNMENT>(m_size);
     }
 
     const size_t m_size;

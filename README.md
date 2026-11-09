@@ -98,3 +98,20 @@ After installation:
 find_package(bfc CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE bfc::bfc)
 ```
+
+## Project config (required)
+
+bfc picks no callback, reactor or allocator types for you. The top-level
+project provides `<bfc_config.hpp>` (see `src/bfc/config.hpp` for the contract)
+and defines a `bfc_config` INTERFACE target for its directory **before**
+adding bfc or calling `find_package(bfc)`:
+
+```cmake
+add_library(bfc_config INTERFACE)
+target_include_directories(bfc_config INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/config)
+```
+
+A missing config is a compile or configure error; there is no fallback. The
+config sets the callback types (`reactor_cb`, `queue_cb`, `timer_cb`), the
+default reactor (`BFC_CONFIG_REACTOR_POLL` or `_EPOLL`) and the allocator type
+(`allocator<T>`, e.g. an alias of `std::allocator`). `tests/config` is bfc's own.

@@ -1,4 +1,11 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
-include("${CMAKE_CURRENT_LIST_DIR}/bfcTargets.cmake")
+if(NOT TARGET bfc_config)
+    message(FATAL_ERROR "bfc needs a bfc_config target providing <bfc_config.hpp>; define it before find_package(bfc)")
+endif()
+if(NOT TARGET bfc::bfc)
+    include("${CMAKE_CURRENT_LIST_DIR}/bfcTargets.cmake")
+    # Consumers of bfc::bfc get the project config on their include path.
+    target_link_libraries(bfc::bfc INTERFACE bfc_config)
+endif()

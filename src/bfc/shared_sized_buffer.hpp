@@ -1,6 +1,8 @@
 #ifndef __BFC_SHARED_SIZED_BUFFER_HPP__
 #define __BFC_SHARED_SIZED_BUFFER_HPP__
 
+#include <bfc/allocation.hpp>
+
 #include <atomic>     // std::atomic
 #include <cstddef>    // std::byte, size_t
 #include <cstdint>    // uint8_t
@@ -34,7 +36,11 @@ public:
 
         ~storage()
         {
-            if (release && bytes)
+            if (owns_bytes && bytes)
+            {
+                bytes_deallocate(bytes, capacity);
+            }
+            else if (release && bytes)
             {
                 release(bytes);
             }
@@ -42,6 +48,7 @@ public:
 
         std::byte* bytes = nullptr;
         size_t capacity = 0;
+        bool owns_bytes = false; // bytes come from bytes_allocate(capacity)
         std::function<void(std::byte*)> release;
         std::atomic<long> refs{1};
     };
@@ -114,10 +121,10 @@ public:
         }
         // Owned by out before the bytes are allocated, so a throwing
         // new[] does not leak the storage.
-        out.m_storage = new storage();
-        out.m_storage->bytes = new std::byte[p_capacity];
+        out.m_storage = alloc_new<storage>();
+        out.m_storage->bytes = bytes_allocate(p_capacity);
+        out.m_storage->owns_bytes = true;
         out.m_storage->capacity = p_capacity;
-        out.m_storage->release = [](std::byte* p) { delete[] p; };
         return out;
     }
 
@@ -136,7 +143,7 @@ public:
             }
             return out;
         }
-        auto* st = new storage();
+        auto* st = alloc_new<storage>();
         st->bytes = p_data;
         st->capacity = p_capacity;
         st->release = std::move(p_release);
@@ -268,7 +275,7 @@ private:
     {
         if (p_storage && 1 == p_storage->refs.fetch_sub(1, std::memory_order_acq_rel))
         {
-            delete p_storage;
+            alloc_delete(p_storage);
         }
     }
 

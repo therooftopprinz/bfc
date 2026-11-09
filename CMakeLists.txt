@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(bfc VERSION 1.0.57 LANGUAGES CXX)
+project(bfc VERSION 2.0.0 LANGUAGES CXX)  # 2.0: a project bfc_config is required
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -16,6 +16,24 @@ add_library(bfc INTERFACE)
 target_include_directories(bfc INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<INSTALL_INTERFACE:include>)
+
+# bfc has no default callback or reactor types: the top-level project provides
+# <bfc_config.hpp> (see src/bfc/config.hpp) through a `bfc_config` INTERFACE
+# target. Standing alone (tests) bfc supplies its own; as a subproject it
+# requires the parent's, so one config governs the whole build.
+if(NOT TARGET bfc_config)
+    if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+        add_library(bfc_config INTERFACE)
+        target_include_directories(bfc_config INTERFACE
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/config)
+    else()
+        message(FATAL_ERROR
+            "bfc needs a bfc_config target (an INTERFACE library whose include "
+            "directory holds <bfc_config.hpp>); the top-level project defines it "
+            "before adding bfc. See src/bfc/config.hpp.")
+    endif()
+endif()
+target_link_libraries(bfc INTERFACE $<BUILD_INTERFACE:bfc_config>)
 
 install(
     DIRECTORY src/bfc
@@ -54,17 +72,21 @@ install(
 
 ################################################################
 
-FILE(GLOB bfc_tests_SRC
-    tests/ut/*.cpp
-    tests/e2e/*.cpp
-    tests/gtestmain.cpp)
-# Ensure new test files are included (GLOB may be cached)
-list(APPEND bfc_tests_SRC
-    tests/ut/simple_shared_buffer_view_tests.cpp
-    tests/ut/sized_buffer_tests.cpp
-    tests/ut/metric_tests.cpp)
-list(REMOVE_DUPLICATES bfc_tests_SRC)
+# The tests assume tests/config (std::function, epoll, counting allocator), so
+# they are built only when bfc is the top-level project.
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    FILE(GLOB bfc_tests_SRC
+        tests/ut/*.cpp
+        tests/e2e/*.cpp
+        tests/gtestmain.cpp)
+    # Ensure new test files are included (GLOB may be cached)
+    list(APPEND bfc_tests_SRC
+        tests/ut/simple_shared_buffer_view_tests.cpp
+        tests/ut/sized_buffer_tests.cpp
+        tests/ut/metric_tests.cpp)
+    list(REMOVE_DUPLICATES bfc_tests_SRC)
 
-add_executable(bfc_tests ${bfc_tests_SRC} gtest/gmock-gtest-all.cc)
-target_include_directories(bfc_tests PUBLIC bfc gtest)
-target_link_libraries(bfc_tests PRIVATE bfc pthread)
+    add_executable(bfc_tests ${bfc_tests_SRC} gtest/gmock-gtest-all.cc)
+    target_include_directories(bfc_tests PUBLIC bfc gtest)
+    target_link_libraries(bfc_tests PRIVATE bfc pthread)
+endif()

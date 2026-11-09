@@ -1,20 +1,17 @@
 #ifndef __BFC_DEFAULT_REACTOR_HPP__
 #define __BFC_DEFAULT_REACTOR_HPP__
 
-// epoll_reactor where epoll exists, poll_reactor elsewhere.
-// TARGET_LINUX / TARGET_POSIX force the choice.
-#if defined(TARGET_LINUX)
-#define BFC_DEFAULT_REACTOR_EPOLL 1
-#elif defined(TARGET_POSIX)
-#elif defined(__has_include)
-#if __has_include(<sys/epoll.h>)
-#define BFC_DEFAULT_REACTOR_EPOLL 1
-#endif
-#elif defined(__linux__)
-#define BFC_DEFAULT_REACTOR_EPOLL 1
-#endif
+#include <bfc/config.hpp>
 
-#if defined(BFC_DEFAULT_REACTOR_EPOLL)
+// default_reactor is the reactor the project's <bfc_config.hpp> selects:
+// BFC_CONFIG_REACTOR_EPOLL -> epoll_reactor, BFC_CONFIG_REACTOR_POLL ->
+// poll_reactor. There is no auto-detection; the choice is the project's.
+#if defined(BFC_CONFIG_REACTOR_EPOLL)
+#if defined(__has_include)
+#if !__has_include(<sys/epoll.h>)
+#error "bfc_config.hpp selects BFC_CONFIG_REACTOR_EPOLL, but this platform has no <sys/epoll.h>; use BFC_CONFIG_REACTOR_POLL"
+#endif
+#endif
 #include <bfc/epoll_reactor.hpp>
 #else
 #include <bfc/poll_reactor.hpp>
@@ -25,14 +22,11 @@
 namespace bfc
 {
 
-// Callbacks are large_functions by default: applications register callbacks
-// that hold their owner (shared_ptr) and more, which light_function's 24
-// bytes rarely fit.
-#if defined(BFC_DEFAULT_REACTOR_EPOLL)
-template <typename cb_t = large_function<void()>>
+#if defined(BFC_CONFIG_REACTOR_EPOLL)
+template <typename cb_t = config::reactor_cb>
 using default_reactor = epoll_reactor<cb_t>;
 #else
-template <typename cb_t = large_function<void()>>
+template <typename cb_t = config::reactor_cb>
 using default_reactor = poll_reactor<cb_t>;
 #endif
 

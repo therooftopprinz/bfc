@@ -1,6 +1,8 @@
 #ifndef __BFC_TIMER_HPP__
 #define __BFC_TIMER_HPP__
 
+#include <bfc/config.hpp>
+
 #include <map>
 #include <list>
 #include <chrono>
@@ -11,7 +13,7 @@
 namespace bfc
 {
 
-template <typename cb_t = light_function<void()>>
+template <typename cb_t = config::timer_cb>
 class timer
 {
 public:
