@@ -1,6 +1,8 @@
 #ifndef __BFC_CV_REACTOR_HPP__
 #define __BFC_CV_REACTOR_HPP__
 
+#include <bfc/config.hpp>
+
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
@@ -16,7 +18,7 @@
 namespace bfc
 {
 
-template <typename cb_t = light_function<void()>>
+template <typename cb_t = config::reactor_cb>
 class cv_reactor
 {
 public:

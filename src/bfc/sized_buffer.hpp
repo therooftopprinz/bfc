@@ -1,6 +1,8 @@
 #ifndef __BFC_SIZE_BUFFER_HPP__
 #define __BFC_SIZE_BUFFER_HPP__
 
+#include <bfc/allocation.hpp>
+
 #include <cstddef>  // std::byte, size_t
 #include <cstring>  // std::memcpy
 
@@ -70,14 +72,14 @@ public:
             return;
         }
 
-        auto* data = new std::byte[new_capacity];
+        auto* data = bytes_allocate(new_capacity);
 
         if (m_storage.data() != nullptr && m_size > 0)
         {
             std::memcpy(data, m_storage.data(), m_size);
         }
 
-        m_storage = bfc::buffer(data, new_capacity);
+        m_storage = bfc::buffer(data, new_capacity, [new_capacity](const void* p) { bytes_deallocate(p, new_capacity); });
     }
 
     // @brief Change logical size to new_size, growing capacity if needed.
@@ -108,14 +110,14 @@ public:
         }
 
         const auto out_size = m_size;
-        auto* data = new std::byte[out_size];
+        auto* data = bytes_allocate(out_size);
         if (m_storage.data() != nullptr)
         {
             std::memcpy(data, m_storage.data(), out_size);
         }
 
         clear();
-        return bfc::buffer(data, out_size);
+        return bfc::buffer(data, out_size, [out_size](const void* p) { bytes_deallocate(p, out_size); });
     }
 
 private:

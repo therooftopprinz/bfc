@@ -1,6 +1,8 @@
 #ifndef __BFC_EPOLL_REACTOR_HPP__
 #define __BFC_EPOLL_REACTOR_HPP__
 
+#include <bfc/config.hpp>
+
 #include <unordered_map>
 #include <stdexcept>
 #include <cstring>
@@ -41,7 +43,7 @@ namespace bfc
 namespace detail
 {
 
-template <typename cb_t = light_function<void()>>
+template <typename cb_t = config::reactor_cb>
 struct epoll_reactor
 {
     struct fd_ctx_s
@@ -405,7 +407,7 @@ private:
 
 } // namespace detail
 
-template <typename cb_t = light_function<void()>>
+template <typename cb_t = config::reactor_cb>
 class epoll_reactor
 {
     using reactor_t = detail::epoll_reactor<cb_t>;

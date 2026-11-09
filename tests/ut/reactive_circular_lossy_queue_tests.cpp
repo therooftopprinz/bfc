@@ -402,7 +402,7 @@ TEST(reactive_circular_lossy_queue, cv_reactor_registry_alias)
 
 TEST(reactive_circular_lossy_queue, cv_reactor_drains_surviving_elements)
 {
-    using reactor_t = cv_reactor<light_function<void()>>;
+    using reactor_t = cv_reactor<>;
     reactor_t reactor;
     reactive_circular_lossy_queue<int> queue;
     queue.set_capacity(2);
