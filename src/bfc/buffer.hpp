@@ -1,6 +1,8 @@
 #ifndef __BFC_BUFFER_HPP__
 #define __BFC_BUFFER_HPP__
 
+#include <bfc/config.hpp>
+
 #include <cstddef>     // std::byte, size_t
 #include <memory>     // std::shared_ptr
 #include <type_traits> // std::is_nothrow_invocable_v, std::remove_cv_t
@@ -11,7 +13,7 @@
 namespace bfc
 {
 
-template<typename T, typename D = light_function<void(const void*)>>
+template<typename T, typename D = config::function<void(const void*)>>
 class simple_buffer
 {
 public:

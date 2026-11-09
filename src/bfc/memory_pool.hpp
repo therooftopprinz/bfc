@@ -1,6 +1,8 @@
 #ifndef __BFC_MEMORYPOOL_HPP__
 #define __BFC_MEMORYPOOL_HPP__
 
+#include <bfc/containers.hpp>
+
 #include <bfc/allocation.hpp>
 
 #include <mutex>
@@ -62,7 +64,7 @@ private:
     }
 
     const size_t m_size;
-    std::vector<std::byte*> m_allocations;
+    bfc::vector<std::byte*> m_allocations;
     std::mutex m_alloc_mtx;
 };
 

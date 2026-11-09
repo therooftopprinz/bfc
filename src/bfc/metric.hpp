@@ -8,6 +8,10 @@
 #ifndef __BFC_METRIC_HPP__
 #define __BFC_METRIC_HPP__
 
+#include <bfc/allocation.hpp>
+
+#include <bfc/containers.hpp>
+
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -66,11 +70,11 @@ class monitor
 public:
     monitor() = delete;
 
-    monitor(size_t interval_ms=100, std::string path="metrics")
+    monitor(size_t interval_ms=100, bfc::string path="metrics")
         : m_interval_ms(interval_ms)
         , m_path(path)
     {
-        std::ofstream(m_path+".csv", std::fstream::out | std::fstream::trunc);
+        std::ofstream((m_path+".csv").c_str(), std::fstream::out | std::fstream::trunc);
 
         m_monitor_thread = std::thread([this](){
                 run_monitor();
@@ -86,16 +90,16 @@ public:
         }
     }
 
-    metric& get_metric(const std::string& full_name)
+    metric& get_metric(const bfc::string& full_name)
     {
         std::unique_lock lg(m_mutex);
 
-        if (m_metrics.count(full_name))
+        if (auto it = m_metrics.find(full_name); it != m_metrics.end())
         {
-            return *m_metrics.at(full_name);
+            return *it->second;
         }
 
-        auto res = m_metrics.emplace(full_name, std::make_unique<metric>());
+        auto res = m_metrics.try_emplace(full_name, bfc::make_unique<metric>());
         return *res.first->second.get();
     }
 
@@ -120,8 +124,8 @@ private:
 
     void collect()
     {
-        std::ofstream fout(m_path+"_", std::fstream::out | std::fstream::trunc);
-        std::ofstream fout2(m_path+".csv", std::fstream::out | std::fstream::app);
+        std::ofstream fout((m_path+"_").c_str(), std::fstream::out | std::fstream::trunc);
+        std::ofstream fout2((m_path+".csv").c_str(), std::fstream::out | std::fstream::app);
         std::unique_lock lg(m_mutex);
         auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now().time_since_epoch()).count();
@@ -139,12 +143,12 @@ private:
     }
 
     size_t m_interval_ms = 1000;
-    std::string m_path = "metrics";
+    bfc::string m_path = "metrics";
     int64_t m_last_update = 0;
     std::atomic_bool m_monitor_running = true;
     std::thread m_monitor_thread;
     std::mutex m_mutex;
-    std::map<std::string, std::unique_ptr<metric>> m_metrics;
+    bfc::map<bfc::string, bfc::unique_ptr<metric>, std::less<>> m_metrics; // find without copying the key
 };
 
 } // namespace bfc

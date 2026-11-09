@@ -1,6 +1,8 @@
 #ifndef __BFC_EPOLL_REACTOR_HPP__
 #define __BFC_EPOLL_REACTOR_HPP__
 
+#include <bfc/containers.hpp>
+
 #include <bfc/config.hpp>
 
 #include <unordered_map>
@@ -43,7 +45,7 @@ namespace bfc
 namespace detail
 {
 
-template <typename cb_t = config::reactor_cb>
+template <typename cb_t = config::function<void()>>
 struct epoll_reactor
 {
     struct fd_ctx_s
@@ -384,12 +386,12 @@ private:
 #endif
     }
 
-    std::vector<epoll_event> m_event_cache;
+    bfc::vector<epoll_event> m_event_cache;
 
     std::mutex m_wake_up_cb_mtx;
     reactor_queues<cb_t> m_queues;
     bool m_queue_backlog = false;  // reactor thread only
-    std::vector<cb_t> m_wake_up_cb;
+    bfc::vector<cb_t> m_wake_up_cb;
 
     int m_epoll_fd;
     int m_event_fd;
@@ -398,8 +400,8 @@ private:
 
     fd_ctx_s m_event_fd_ctx;
 
-    std::unordered_map<int, fd_entry_s> m_fd_entries;
-    std::vector<int> m_pending_cleanup;
+    bfc::unordered_map<int, fd_entry_s> m_fd_entries;
+    bfc::vector<int> m_pending_cleanup;
 
     using timer_t = timer<cb_t>;
     timer_t m_timer;
@@ -407,7 +409,7 @@ private:
 
 } // namespace detail
 
-template <typename cb_t = config::reactor_cb>
+template <typename cb_t = config::function<void()>>
 class epoll_reactor
 {
     using reactor_t = detail::epoll_reactor<cb_t>;
@@ -427,9 +429,9 @@ public:
         return errno;
     }
 
-    std::string get_last_error()
+    bfc::string get_last_error()
     {
-        return strerror(errno);
+        return bfc::string(strerror(errno));
     }
 
     bool add_read_rdy(fd_t fd, cb_t cb)
@@ -563,7 +565,7 @@ private:
 
     void run_removals()
     {
-        std::vector<pending_removal_s> batch;
+        bfc::vector<pending_removal_s> batch;
         {
             std::unique_lock<std::mutex> lg(m_removals_mtx);
             batch.swap(m_removals);
@@ -586,7 +588,7 @@ private:
     }
 
     std::mutex m_removals_mtx;
-    std::vector<pending_removal_s> m_removals;
+    bfc::vector<pending_removal_s> m_removals;
 
     reactor_t m_reactor;
 };

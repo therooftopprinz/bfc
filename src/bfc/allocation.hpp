@@ -95,6 +95,28 @@ void alloc_delete(T *p) noexcept
     }
 }
 
+// unique_ptr over the config allocator: the deleter returns the object to it.
+// Unlike the containers this is a different type from std::unique_ptr<T> even
+// with the default allocator (the deleter differs), so use it for owning
+// members, not in public signatures.
+template <typename T>
+struct alloc_deleter
+{
+    void operator()(T *p) const noexcept
+    {
+        alloc_delete(p);
+    }
+};
+
+template <typename T>
+using unique_ptr = std::unique_ptr<T, alloc_deleter<T>>;
+
+template <typename T, typename... args_t>
+unique_ptr<T> make_unique(args_t &&...args)
+{
+    return unique_ptr<T>(alloc_new<T>(std::forward<args_t>(args)...));
+}
+
 } // namespace bfc
 
 #endif // __BFC_ALLOCATION_HPP__

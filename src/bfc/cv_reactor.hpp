@@ -1,6 +1,8 @@
 #ifndef __BFC_CV_REACTOR_HPP__
 #define __BFC_CV_REACTOR_HPP__
 
+#include <bfc/containers.hpp>
+
 #include <bfc/config.hpp>
 
 #include <atomic>
@@ -18,7 +20,7 @@
 namespace bfc
 {
 
-template <typename cb_t = config::reactor_cb>
+template <typename cb_t = config::function<void()>>
 class cv_reactor
 {
 public:
@@ -187,12 +189,12 @@ public:
     std::condition_variable m_cv;
 
     std::mutex m_ctx_mtx;
-    std::list<context*> m_contexts;
+    bfc::list<context*> m_contexts;
     // run()'s per-wake copy of m_contexts; reused so a wake does not allocate.
-    std::vector<context*> m_ctx_snapshot;
+    bfc::vector<context*> m_ctx_snapshot;
 
     std::mutex m_wake_up_cb_mtx;
-    std::vector<cb_t> m_wake_up_cb;
+    bfc::vector<cb_t> m_wake_up_cb;
 
     std::atomic<bool> m_running{false};
     std::atomic<std::thread::id> m_reactor_thread_id{};

@@ -7,7 +7,6 @@
 #include <cstddef>    // std::byte, size_t
 #include <cstdint>    // uint8_t
 #include <cstring>    // std::memcpy
-#include <functional> // std::function
 #include <utility>    // std::exchange
 
 #include <bfc/buffer.hpp>
@@ -49,7 +48,7 @@ public:
         std::byte* bytes = nullptr;
         size_t capacity = 0;
         bool owns_bytes = false; // bytes come from bytes_allocate(capacity)
-        std::function<void(std::byte*)> release;
+        config::function<void(std::byte*)> release;
         std::atomic<long> refs{1};
     };
 
@@ -132,7 +131,7 @@ public:
     // gone. On invalid arguments p_data is released immediately and an empty
     // buffer is returned.
     static shared_sized_buffer adopt(std::byte* p_data, size_t p_capacity, size_t p_size,
-        std::function<void(std::byte*)> p_release)
+        config::function<void(std::byte*)> p_release)
     {
         shared_sized_buffer out;
         if (!p_data || !p_capacity || p_size > p_capacity)

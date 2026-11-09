@@ -1,6 +1,8 @@
 #ifndef __BFC_EVENT_QUEUE_HPP__
 #define __BFC_EVENT_QUEUE_HPP__
 
+#include <bfc/containers.hpp>
+
 #include <bfc/allocation.hpp>
 
 #include <bfc/config.hpp>
@@ -38,7 +40,7 @@ public:
     template <typename reactor_t>
     void set_reactor(std::shared_ptr<reactor_t> reactor)
     {
-        light_function<void()> wake_callback;
+        config::function<void()> wake_callback;
         if (reactor)
         {
             wake_callback = [reactor = std::move(reactor)]() {
@@ -69,9 +71,9 @@ protected:
     }
 
 private:
-    void replace_wake_callback(light_function<void()> wake_callback)
+    void replace_wake_callback(config::function<void()> wake_callback)
     {
-        light_function<void()> retired;
+        config::function<void()> retired;
         {
             std::unique_lock<std::mutex> lock(m_reactor_mtx);
             retired = std::move(m_wake_callback);
@@ -81,10 +83,10 @@ private:
     }
 
     std::mutex m_reactor_mtx;
-    light_function<void()> m_wake_callback;
+    config::function<void()> m_wake_callback;
 };
 
-template <typename T, typename callback_t = config::queue_cb>
+template <typename T, typename callback_t = config::function<void()>>
 class reactive_event_queue : public reactive_event_queue_base<callback_t>
 {
 public:
@@ -104,7 +106,7 @@ public:
         return size_after;
     }
 
-    std::vector<T> pop()
+    bfc::vector<T> pop()
     {
         std::unique_lock<std::mutex> lg(m_queue_mtx);
         return std::move(m_queue);
@@ -139,7 +141,7 @@ public:
 
 private:
     std::mutex m_queue_mtx;
-    std::vector<T> m_queue;
+    bfc::vector<T> m_queue;
     std::mutex cb_mtx;
     callback_t m_cb = nullptr;
 };
@@ -153,12 +155,12 @@ private:
 // Capacity-zero pushes discard the item and do not signal.
 // Destructors of dropped and retired elements run after the queue mutex is
 // released.
-template <typename T, typename callback_t = config::queue_cb>
+template <typename T, typename callback_t = config::function<void()>>
 class reactive_circular_lossy_queue
     : public reactive_event_queue_base<callback_t>
 {
 public:
-    using slots_t = std::vector<std::optional<T>, config::allocator<std::optional<T>>>;
+    using slots_t = bfc::vector<std::optional<T>>;
 
     static_assert(std::is_nothrow_move_constructible<T>::value,
         "reactive_circular_lossy_queue requires nothrow move construction");
@@ -326,7 +328,7 @@ public:
         return m_queue.size();
     }
 
-    std::vector<T> pop()
+    bfc::vector<T> pop()
     {
         std::unique_lock<std::mutex> lg(m_queue_mtx);
         if (m_blocking && m_queue.empty())
@@ -352,12 +354,12 @@ private:
     bool m_blocking = true;
     std::mutex m_queue_mtx;
     std::condition_variable cv;
-    std::vector<T> m_queue;
+    bfc::vector<T> m_queue;
 };
 
 template <typename element_t = uint64_t>
 using cv_reactor_event_queue_tag =
-    object_tag<reactive_event_queue<element_t, config::queue_cb>>;
+    object_tag<reactive_event_queue<element_t, config::function<void()>>>;
 
 template <typename element_t = uint64_t>
 using cv_reactor_event_queue_registry =
@@ -365,7 +367,7 @@ using cv_reactor_event_queue_registry =
 
 template <typename element_t = uint64_t>
 using cv_reactor_circular_lossy_queue_tag =
-    object_tag<reactive_circular_lossy_queue<element_t, config::queue_cb>>;
+    object_tag<reactive_circular_lossy_queue<element_t, config::function<void()>>>;
 
 template <typename element_t = uint64_t>
 using cv_reactor_circular_lossy_queue_registry =

@@ -20,13 +20,16 @@
 //     template <typename T> using allocator = ...;
 //   It must honour alignof(T), including over-aligned T (memory_pool asks for
 //   16- or 64-byte blocks).
-//   Callbacks stay on the global heap: std::function captures (including a
-//   capturing release callback given to shared_sized_buffer::adopt) are not
-//   placed by the allocator.
-//   and the callback types every default uses:
-//     reactor_cb                     reactor callbacks (cv, poll, epoll, default)
-//     queue_cb                       reactive queue callbacks
-//     timer_cb                       timer callbacks
+//   Callback captures are stored by config::function, not the allocator: inline
+//   for a fixed-size function, on the global heap for std::function captures
+//   that do not fit its small buffer. std::regex state is also global heap.
+//   and the one function template every callback in bfc uses (reactor, timer,
+//   queue, thread pool, command and release callbacks, bfc's own internals):
+//     template <typename Signature> using function = ...;
+//   either std::function or a fixed-size function large enough for the
+//   captures (bfc::large_function holds 64 bytes inline; bfc's own internal
+//   callbacks capture at most a few words). It must be constructible from a
+//   lambda, testable for empty, and callable as the signature.
 //
 // Example (a project that wants std::function callbacks on a poll reactor):
 //
@@ -36,9 +39,8 @@
 //   #define BFC_CONFIG_REACTOR_POLL 1
 //   namespace bfc::config
 //   {
-//   using reactor_cb = std::function<void()>;
-//   using queue_cb = std::function<void()>;
-//   using timer_cb = std::function<void()>;
+//   template <typename Signature>
+//   using function = std::function<Signature>;
 //   template <typename T> using allocator = std::allocator<T>;
 //   } // namespace bfc::config
 
@@ -69,9 +71,9 @@ namespace bfc
 namespace config
 {
 
-static_assert(std::is_invocable_r_v<void, reactor_cb &>, "bfc::config::reactor_cb must be callable as void()");
-static_assert(std::is_invocable_r_v<void, queue_cb &>, "bfc::config::queue_cb must be callable as void()");
-static_assert(std::is_invocable_r_v<void, timer_cb &>, "bfc::config::timer_cb must be callable as void()");
+static_assert(std::is_invocable_r_v<void, function<void()> &>, "bfc::config::function<void()> must be callable");
+static_assert(std::is_invocable_r_v<void, function<void(std::byte *)> &, std::byte *>, "bfc::config::function<void(std::byte *)> must be callable");
+static_assert(std::is_constructible_v<bool, const function<void()> &>, "bfc::config::function must be testable for empty (explicit operator bool)");
 static_assert(std::is_same_v<typename allocator<int>::value_type, int>, "bfc::config::allocator<T> must be an allocator of T");
 static_assert(std::is_empty_v<allocator<int>>, "bfc::config::allocator<T> must be stateless");
 static_assert(std::is_nothrow_default_constructible_v<allocator<int>>, "bfc::config::allocator<T> must be default constructible");

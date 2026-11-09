@@ -1,6 +1,8 @@
 #ifndef __BFC_CONFIGURATION_PARSER_HPP__
 #define __BFC_CONFIGURATION_PARSER_HPP__
 
+#include <bfc/containers.hpp>
+
 #include <optional>
 #include <utility>
 #include <fstream>
@@ -15,17 +17,17 @@ namespace bfc
 
 namespace detail
 {
-inline std::string trim(const std::string& s)
+inline bfc::string trim(const bfc::string& s)
 {
     auto start = s.find_first_not_of(" \t\r\n");
-    if (start == std::string::npos)
-        return "";
+    if (start == bfc::string::npos)
+        return bfc::string();
     auto end = s.find_last_not_of(" \t\r\n");
     return s.substr(start, end - start + 1);
 }
 } // namespace detail
 
-class args_map : public std::map<std::string, std::string, std::less<>>
+class args_map : public bfc::map<bfc::string, bfc::string, std::less<>>
 {
 public:
     args_map() = default;
@@ -40,7 +42,7 @@ public:
         }
 
         T rv;
-        std::istringstream iss(findit->second);
+        bfc::istringstream iss(findit->second);
         iss >> rv;
         if (iss.fail())
         {
@@ -50,7 +52,7 @@ public:
         return rv;
     }
 
-    std::optional<std::string> arg(const std::string_view& p_key) const
+    std::optional<bfc::string> arg(const std::string_view& p_key) const
     {
         auto findit = find(p_key);
         if (findit == end())
@@ -64,25 +66,26 @@ public:
 class configuration_parser : public args_map
 {
 public:
-    void load_line(const std::string& line)
+    void load_line(const bfc::string& line)
     {
         static const std::regex config_fmt("^(.+?)[ ]*=[ ]*(.*?)$");
-        std::smatch match;
+        bfc::string_match match;
         if (std::regex_match(line, match, config_fmt))
         {
-            try_emplace(detail::trim(match[1].str()), detail::trim(match[2].str()));
+            try_emplace(detail::trim(bfc::string(match[1].first, match[1].second)),
+                        detail::trim(bfc::string(match[2].first, match[2].second)));
         }
     }
 
-    bool load(const std::string& file)
+    bool load(const bfc::string& file)
     {
-        std::ifstream in(file);
+        std::ifstream in(file.c_str());
         if (!in.is_open())
         {
             return false;
         }
 
-        std::string line;
+        bfc::string line;
         while (std::getline(in, line))
         {
             load_line(line);

@@ -1,6 +1,8 @@
 #ifndef __BFC_OBJECT_REGISTRY_HPP__
 #define __BFC_OBJECT_REGISTRY_HPP__
 
+#include <bfc/containers.hpp>
+
 #include <memory>
 #include <mutex>
 #include <string>
@@ -35,7 +37,7 @@ public:
             return false;
         }
         std::lock_guard<std::mutex> lock(m_mutex);
-        const std::string key(name);
+        const bfc::string key(name.data(), name.size());
         if (m_objects.find(key) != m_objects.end())
         {
             return false;
@@ -47,13 +49,13 @@ public:
     bool rem(std::string_view name)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        return m_objects.erase(std::string(name)) != 0;
+        return m_objects.erase(bfc::string(name.data(), name.size())) != 0;
     }
 
     std::shared_ptr<object_t> get(std::string_view name)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        const auto it = m_objects.find(std::string(name));
+        const auto it = m_objects.find(bfc::string(name.data(), name.size()));
         if (it == m_objects.end())
         {
             return {};
@@ -71,7 +73,7 @@ private:
     ~object_registry() = default;
 
     std::mutex m_mutex;
-    std::unordered_map<std::string, std::shared_ptr<object_t>> m_objects;
+    bfc::unordered_map<bfc::string, std::shared_ptr<object_t>, bfc::string_hash> m_objects;
 };
 
 }  // namespace bfc
