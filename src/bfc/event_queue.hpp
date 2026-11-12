@@ -1,6 +1,7 @@
 #ifndef __BFC_EVENT_QUEUE_HPP__
 #define __BFC_EVENT_QUEUE_HPP__
 
+#include <atomic>
 #include <bfc/containers.hpp>
 
 #include <bfc/allocation.hpp>
@@ -101,6 +102,7 @@ public:
             std::unique_lock<std::mutex> lg(m_queue_mtx);
             m_queue.emplace_back(std::forward<U>(u));
             size_after = m_queue.size();
+            m_size_hint.store(size_after, std::memory_order_release);
         }
         this->notify_push();
         return size_after;
@@ -109,7 +111,10 @@ public:
     bfc::vector<T> pop()
     {
         std::unique_lock<std::mutex> lg(m_queue_mtx);
-        return std::move(m_queue);
+        bfc::vector<T> out = std::move(m_queue);
+        m_queue.clear();
+        m_size_hint.store(0, std::memory_order_release);
+        return out;
     }
 
     size_t size()
@@ -124,10 +129,14 @@ public:
         m_cb = std::move(cb);
     }
 
+    // Lock-free: the reactor polls has_data() on every context on every
+    // wake, and a mutex round trip per context per wake was most of a busy
+    // reactor's time on ESP-IDF. A push stores the size before it signals
+    // the reactor, so a woken reactor sees it; a stale "empty" can only
+    // happen without a wake, which the next wake picks up, as before.
     bool has_data() override
     {
-        std::unique_lock<std::mutex> lg(m_queue_mtx);
-        return !m_queue.empty();
+        return m_size_hint.load(std::memory_order_acquire) != 0;
     }
 
     void notify_callback() override
@@ -142,6 +151,7 @@ public:
 private:
     std::mutex m_queue_mtx;
     bfc::vector<T> m_queue;
+    std::atomic<size_t> m_size_hint{0};  // m_queue.size(), written under m_queue_mtx
     std::mutex cb_mtx;
     callback_t m_cb = nullptr;
 };
@@ -199,6 +209,7 @@ public:
             m_capacity = capacity;
             m_head = 0;
             m_count = keep;
+            m_count_hint.store(m_count, std::memory_order_release);
         }
     }
 
@@ -224,6 +235,7 @@ public:
                 const size_t tail = (m_head + m_count) % m_capacity;
                 m_slots[tail].emplace(std::move(u));
                 ++m_count;
+                m_count_hint.store(m_count, std::memory_order_release);
             }
             else
             {
@@ -256,6 +268,7 @@ public:
             m_slots[m_head].reset();
             m_head = (m_head + 1) % m_capacity;
             --m_count;
+            m_count_hint.store(m_count, std::memory_order_release);
         }
         return out;
     }
@@ -278,10 +291,10 @@ public:
         m_cb = std::move(cb);
     }
 
+    // Lock-free, as reactive_event_queue::has_data().
     bool has_data() override
     {
-        std::unique_lock<std::mutex> lg(m_queue_mtx);
-        return m_count != 0;
+        return m_count_hint.load(std::memory_order_acquire) != 0;
     }
 
     // Copies the callback and invokes it without cb_mtx held, so the handler
@@ -306,6 +319,7 @@ private:
     size_t m_capacity = 0;
     size_t m_head = 0;
     size_t m_count = 0;
+    std::atomic<size_t> m_count_hint{0};  // m_count, written under m_queue_mtx
     slots_t m_slots;
 };
 
