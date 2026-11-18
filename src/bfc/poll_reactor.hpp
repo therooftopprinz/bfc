@@ -77,7 +77,7 @@ struct poll_reactor
     void operator=(const poll_reactor&) = delete;
 
     poll_reactor(size_t = 64)
-        : m_running(false)
+        : m_stop_requested(false)
     {
         if (pipe(m_wake_pipe) == -1)
         {
@@ -257,8 +257,8 @@ struct poll_reactor
     void run()
     {
         m_reactor_thread_id = std::this_thread::get_id();
-        m_running = true;
-        while (m_running)
+        // stop() may come before this thread gets here; the request stays until run() sees it.
+        while (!m_stop_requested.load())
         {
             int timeout_ms = -1;
             int64_t next_deadline_us = 0;
@@ -393,13 +393,15 @@ struct poll_reactor
             m_retired_cbs.clear();
 
             m_timer.schedule(timer_t::current_time_us());
-        } // while (m_running)
+        } // while (!m_stop_requested)
+        m_stop_requested = false; // consumed: a later run() runs again
         m_reactor_thread_id = std::thread::id{};
     }
 
+    // Ends run(), also when called before run() has started.
     void stop()
     {
-        m_running = false;
+        m_stop_requested = true;
         wake_up();
     }
 
@@ -564,7 +566,7 @@ private:
     int m_wake_pipe[2]{-1, -1};
     cb_t m_wake_cb = nullptr;
     std::atomic<bool> m_wake_pending{false};
-    std::atomic<bool> m_running;
+    std::atomic<bool> m_stop_requested;
     std::atomic<std::thread::id> m_reactor_thread_id{};
 
     bfc::unordered_map<int, fd_entry_s> m_fd_entries;
