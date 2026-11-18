@@ -90,8 +90,8 @@ public:
     void run()
     {
         m_reactor_thread_id = std::this_thread::get_id();
-        m_running = true;
-        while (m_running)
+        // stop() may come before this thread gets here; the request stays until run() sees it.
+        while (!m_stop_requested.load())
         {
             int64_t next_deadline_us = 0;
             bool has_deadline = m_timer.get_next_deadline_us(next_deadline_us);
@@ -115,10 +115,10 @@ public:
 
                 m_cv.wait_for(lg, std::chrono::microseconds(timeout_us), [this]()
                     {
-                        return m_wakeup_req || !m_running;
+                        return m_wakeup_req || m_stop_requested.load();
                     });
 
-                if (!m_running)
+                if (m_stop_requested.load())
                 {
                     break;
                 }
@@ -157,6 +157,7 @@ public:
 
             m_timer.schedule(timer_t::current_time_us());
         }
+        m_stop_requested = false; // consumed: a later run() runs again
         m_reactor_thread_id = std::thread::id{};
     }
 
@@ -173,9 +174,10 @@ public:
         m_cv.notify_one();
     }
 
+    // Ends run(), also when called before run() has started.
     void stop()
     {
-        m_running = false;
+        m_stop_requested = true;
         wake_up();
     }
 
@@ -196,7 +198,7 @@ public:
     std::mutex m_wake_up_cb_mtx;
     bfc::vector<cb_t> m_wake_up_cb;
 
-    std::atomic<bool> m_running{false};
+    std::atomic<bool> m_stop_requested{false};
     std::atomic<std::thread::id> m_reactor_thread_id{};
 };
 
